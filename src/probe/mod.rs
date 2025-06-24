@@ -1,164 +1,223 @@
-pub mod visualisation;use bevy::{
-    ecs::system::ParamSet,
-    pbr::{NotShadowCaster, NotShadowReceiver},
-    prelude::*,
-    render::{
-        extract_component::{ExtractComponent, ExtractComponentPlugin, UniformComponentPlugin}, gpu_readback::{GpuReadbackPlugin, Readback, ReadbackComplete}, render_asset::{RenderAssetUsages, RenderAssets}, render_graph::{self, RenderGraph, RenderLabel}, render_resource::{
-            binding_types::{storage_buffer, texture_storage_2d, uniform_buffer}, BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries, BufferUsages, CachedComputePipelineId, ComputePassDescriptor, ComputePipelineDescriptor, Extent3d, PipelineCache, ShaderStages, ShaderType, StorageTextureAccess, TextureDimension, TextureFormat, TextureUsages
-        }, renderer::{RenderContext, RenderDevice}, storage::{GpuShaderStorageBuffer, ShaderStorageBuffer}, Render, RenderApp
+pub mod visualisation;
+use bevy::{
+    app::{App, Plugin},
+    asset::{AssetServer, Assets, Handle, load_internal_asset, weak_handle},
+    core_pipeline::core_3d::graph::Core3d,
+    ecs::{
+        component::Component,
+        entity::Entity,
+        event::EventWriter,
+        query::{QueryState, With, Without},
+        schedule::IntoScheduleConfigs,
+        system::{Commands, Query, Res, ResMut, SystemParamItem},
+        world::{FromWorld, World},
     },
+    log::info,
+    math::{Vec2, Vec4},
+    prelude::{Added, Camera, Color, Image, PluginGroup, Resource, Startup, Trigger, Update},
+    render::{
+        Render, RenderApp, RenderSet,
+        extract_component::{ExtractComponent, ExtractComponentPlugin},
+        gpu_readback::{GpuReadbackPlugin, Readback, ReadbackComplete},
+        graph::CameraDriverLabel,
+        render_asset::{RenderAsset, RenderAssets},
+        render_graph::{self, RenderGraph, RenderGraphApp, RenderLabel},
+        render_resource::{
+            AsBindGroup, BindGroup, BindGroupEntries, BindGroupEntry, BindGroupLayout, Buffer,
+            BufferUsages, CachedComputePipelineId, ComputePassDescriptor,
+            ComputePipelineDescriptor, PipelineCache, Shader, ShaderRef, ShaderStages, ShaderType,
+            StorageBuffer, StorageTextureAccess, TextureFormat, TextureUsages,
+            TextureViewDimension, UniformBuffer
+        },
+        renderer::{RenderContext, RenderDevice},
+        storage::{GpuShaderStorageBuffer, ShaderStorageBuffer},
+        texture::{FallbackImage, GpuImage},
+    },
+    utils::default,
 };
 
-
+/// This plugin provides the components and systems for GPU-based render target probing.
 pub struct ProbePlugin;
 
 impl Plugin for ProbePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((
-            ExtractComponentPlugin::<Probe>::default(),
-            UniformComponentPlugin::<Probe>::default(),
-        ));
+        // This asset is needed by the probe pipeline.
+        load_internal_asset!(
+            app,
+            PROBE_SHADER_HANDLE,
+            "probe_readback.wgsl",
+            Shader::from_wgsl
+        );
 
-        app.add_systems(Startup, Probe::setup);
+        app.add_plugins((ExtractComponentPlugin::<ProbeSettings>::default(),))
+            .add_systems(Update, Self::setup_probe_on_camera);
     }
+
     fn finish(&self, app: &mut App) {
         let render_app = app.sub_app_mut(RenderApp);
+
         render_app.init_resource::<ProbePipeline>().add_systems(
             Render,
-            Probe::prepare_bind_group
-                // We don't need to recreate the bind group every frame
+            Self::prepare_probe_bind_groups.in_set(RenderSet::PrepareBindGroups),
         );
 
-        // Add the compute node as a top level node to the render graph
-        // This means it will only execute once per frame
-        render_app
-            .world_mut()
-            .resource_mut::<RenderGraph>()
-            .add_node(ProbeNodeLabel, ProbeNode::default());
+        let world = render_app.world_mut();
+        let mut render_graph = world.resource_mut::<RenderGraph>();
+
+        // render_graph.add_node(ProbeNodeLabel, ProbeNode::from_world(world));
     }
 }
 
-#[derive(Component, ExtractComponent, Clone, Default)]
-pub struct ProbeReadbackBuffer(Handle<ShaderStorageBuffer>);
-
-#[derive(Component, Default)]
-struct ProbeReadbackBufferBindGroup(Option<BindGroup>);
-
-#[derive(Component, Default, Clone, Copy, ExtractComponent, ShaderType)]
-#[require(Camera, ProbeReadbackBuffer, ProbeReadbackBufferBindGroup)]
-pub struct Probe {
-    // Size of the kernel in pixels
-    pub kernel: Vec2,
-    // Coordinates of pointer on the probe screen
-    pub coords: Vec2,
-}
-
-impl Probe {
-    fn kernel_size(&self) -> usize {
-        self.kernel.x as usize * self.kernel.y as usize
-    }
-}
-
-#[derive(Resource)]
-pub struct ProbePipeline {
-    layout: BindGroupLayout,
-    pipeline: CachedComputePipelineId,
-}
-
-const SHADER_ASSET_PATH: &str = "shaders/probe_readback.wgsl";
-
-impl FromWorld for ProbePipeline {
-    fn from_world(world: &mut World) -> Self {
-        let render_device = world.resource::<RenderDevice>();
-        let layout = render_device.create_bind_group_layout(
-            None,
-            &BindGroupLayoutEntries::sequential(
-                ShaderStages::COMPUTE,
-                (
-                    // the probe struct
-                    uniform_buffer::<Probe>(false),
-                    // the kernel data around the mouse position sent back from the gpu
-                    storage_buffer::<Vec<Vec4>>(false),
-                    // the probe probe render target
-                    texture_storage_2d(TextureFormat::Rgba8Unorm,StorageTextureAccess::ReadOnly),
-                ),
-            ),
-        );
-        let shader = world.load_asset(SHADER_ASSET_PATH);
-        let pipeline_cache = world.resource::<PipelineCache>();
-        let pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
-            label: Some("GPU readback compute shader".into()),
-            layout: vec![layout.clone()],
-            push_constant_ranges: Vec::new(),
-            shader: shader.clone(),
-            shader_defs: Vec::new(),
-            entry_point: "main".into(),
-            zero_initialize_workgroup_memory: false,
-        });
-        Self { layout, pipeline }
-    }
-}
-
-impl Probe {
-    fn setup(
-        mut commands: Commands,
-        mut probe_query: Query<(Entity, &Probe), Added<Probe>>,
-        mut buffers: ResMut<Assets<ShaderStorageBuffer>>,
-    ) {
-        for (entity, probe) in probe_query.iter() {
-            // Create a storage buffer for our color data
-            let buffer = vec![Vec4::ZERO; probe.kernel_size()];
-            let mut buffer = ShaderStorageBuffer::from(buffer);
-            // We need to enable the COPY_SRC usage so we can copy the buffer to the cpu
-            buffer.buffer_description.usage |= BufferUsages::COPY_SRC;
-            let buffer = buffers.add(buffer);
-
-            commands
-                .entity(entity)
-                .insert(ProbeReadbackBuffer(buffer.clone()))
-                .insert(Readback::buffer(buffer))
-                .observe(|trigger: Trigger<ReadbackComplete>| {
-                    // This matches the type which was used to create the `ShaderStorageBuffer` above,
-                    // and is a convenient way to interpret the data.
-                    let kernel_data: Vec<Vec4> = trigger.event().to_shader_type();
-                    info!("Buffer {:?}", kernel_data);
-                });
-        }
-    }
-    fn prepare_bind_group(
-        mut commands: Commands,
-        pipeline: Res<ProbePipeline>,
-        render_device: Res<RenderDevice>,
-        buffers: Res<RenderAssets<GpuShaderStorageBuffer>>,
-        probe_query: Query<(Entity, &ProbeReadbackBuffer, &Probe, &Camera), Without<ProbeReadbackBufferBindGroup>>,
-    ) {
-        for (entity, probe_readback_buffer, probe, camera) in probe_query.iter() {
-            let buffer = buffers.get(&probe_readback_buffer.0).unwrap();
-
-            let render_target = camera.target.as_image().unwrap();
-
-            let bind_group = render_device.create_bind_group(
-                None,
-                &pipeline.layout,
-                &BindGroupEntries::sequential((
-                    probe.as_entire_uniform_buffer_binding(),
-                    render_target,
-                    buffer.buffer.as_entire_buffer_binding(),
-                )),
-            );
-            commands
-                .entity(entity)
-                .insert(ProbeReadbackBufferBindGroup(Some(bind_group)));
-        }
-    }
-}
+/// Handle to the compute shader used by the probe.
+const PROBE_SHADER_HANDLE: Handle<Shader> = weak_handle!("5db828ff-9ee5-4c25-a12a-886e2aeb096d");
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
 pub struct ProbeNodeLabel;
 
-#[derive(Default)]
-struct ProbeNode {}
+struct ProbeNode {
+    query: QueryState<(&'static PreparedProbe, &'static ProbeSettings)>,
+}
 
+impl FromWorld for ProbeNode {
+    fn from_world(world: &mut World) -> Self {
+        Self {
+            query: world.query::<(&PreparedProbe, &ProbeSettings)>(),
+        }
+    }
+}
+
+/// A marker component for a 3D camera that should be probed.
+#[derive(Component)]
+pub struct Probe;
+
+#[derive(Component, Clone, ExtractComponent, ShaderType)]
+pub struct ProbeSettings {
+    /// Size of the kernel in pixels.
+    pub kernel_size: Vec2,
+    /// Normalized coordinates of the probe center on the render target.
+    pub center_coords: Vec2,
+    // Note: Std140 layout requires fields to be 16-byte aligned.
+    // The `Vec2`s are padded automatically by the `ShaderType` derive.
+}
+
+/// This component is created on the render world and holds the prepared `BindGroup`.
+#[derive(Component)]
+struct PreparedProbe(BindGroup);
+
+/// This is the data that will be bound to the compute shader.
+#[derive(Component, AsBindGroup)]
+struct ProbeBindGroup {
+    #[uniform(0)]
+    settings: ProbeSettings,
+    #[storage_texture(1, access = ReadOnly)]
+    source_texture: Handle<Image>,
+    #[storage(2, visibility(compute))]
+    output_buffer: Handle<ShaderStorageBuffer>,
+}
+
+/// Caches the compute pipeline and bind group layout.
+#[derive(Resource)]
+struct ProbePipeline {
+    layout: BindGroupLayout,
+    pipeline: CachedComputePipelineId,
+}
+
+impl FromWorld for ProbePipeline {
+    fn from_world(world: &mut World) -> Self {
+        let render_device = world.resource::<RenderDevice>();
+        // Create the layout from the `AsBindGroup` struct to ensure they match.
+        let layout = ProbeBindGroup::bind_group_layout(render_device);
+
+        let pipeline_cache = world.resource::<PipelineCache>();
+        let pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+            zero_initialize_workgroup_memory: false,
+            label: Some("probe_pipeline".into()),
+            layout: vec![layout.clone()],
+            shader: PROBE_SHADER_HANDLE,
+            shader_defs: vec![],
+            entry_point: "main".into(),
+            push_constant_ranges: vec![],
+        });
+
+        Self { layout, pipeline }
+    }
+}
+
+impl ProbePlugin {
+    /// Attaches the necessary probe components to any camera that has the `Probe` marker component.
+    fn setup_probe_on_camera(
+        mut commands: Commands,
+        // This query runs for any camera that has our `Probe` marker but doesn't yet have `ProbeSettings`.
+        camera_query: Query<(Entity, &Camera), (Added<Probe>, Without<ProbeSettings>)>,
+        mut ssbo_assets: ResMut<Assets<ShaderStorageBuffer>>,
+    ) {
+        for (entity, camera) in camera_query.iter() {
+            let Some(render_target) = camera.target.as_image().cloned() else {
+                // This probe setup only works when rendering to a texture.
+                // You could extend it to work with the primary window.
+                continue;
+            };
+
+            let kernel_size = Vec2::new(16.0, 16.0);
+            let settings = ProbeSettings {
+                kernel_size,
+                center_coords: Vec2::new(0.5, 0.5),
+            };
+
+            let buffer = vec![Vec4::ZERO; (kernel_size.x * kernel_size.y) as usize];
+            let mut ssbo = ShaderStorageBuffer::from(buffer);
+            ssbo.buffer_description.usage |=
+                BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC;
+            let ssbo_handle = ssbo_assets.add(ssbo);
+
+            commands
+                .entity(entity)
+                .insert((
+                    settings.clone(),
+                    // The `ProbeBindGroup` contains all the data needed by the shader.
+                    // Bevy will automatically extract this to the render world.
+                    ProbeBindGroup {
+                        settings,
+                        source_texture: render_target,
+                        output_buffer: ssbo_handle.clone(),
+                    },
+                    Readback::buffer(ssbo_handle),
+                ))
+                .observe(|trigger: Trigger<ReadbackComplete>| {
+                    // This matches the type which was used to create the `ShaderStorageBuffer` above,
+                    // and is a convenient way to interpret the data.
+                    let data: Vec<Vec4> = trigger.event().to_shader_type();
+                    info!("Buffer {:?}", data);
+                });
+        }
+    }
+
+    /// Prepares the `BindGroup` for each probe on the render world.
+    /// This runs in `RenderSet::PrepareBindGroups`, and Bevy's `AsBindGroup` infrastructure
+    /// has already prepared the underlying buffers for us.
+    fn prepare_probe_bind_groups(
+        mut commands: Commands,
+        pipeline: Res<ProbePipeline>,
+        render_device: Res<RenderDevice>,
+        mut system_params: SystemParamItem<(
+            Res<RenderAssets<GpuImage>>,
+            Res<FallbackImage>,
+            Res<RenderAssets<GpuShaderStorageBuffer>>,
+        )>,
+        probe_query: Query<(Entity, &ProbeBindGroup)>,
+    ) {
+        for (entity, bind_group_data) in probe_query.iter() {
+            let bind_group = bind_group_data
+                .as_bind_group(&pipeline.layout, &render_device, &mut system_params)
+                .unwrap();
+            commands
+                .entity(entity)
+                .insert(PreparedProbe(bind_group.bind_group));
+        }
+    }
+}
+
+/// The render graph node that executes the probe compute shader.
 impl render_graph::Node for ProbeNode {
     fn run(
         &self,
@@ -167,31 +226,32 @@ impl render_graph::Node for ProbeNode {
         world: &World,
     ) -> Result<(), render_graph::NodeRunError> {
         let pipeline_cache = world.resource::<PipelineCache>();
-        let pipeline = world.resource::<ProbePipeline>();
+        let probe_pipeline = world.resource::<ProbePipeline>();
 
-        let mut query = world.query::<(Entity, &Probe,&ProbeReadbackBuffer, &ProbeReadbackBufferBindGroup)>();
-
-        let init_pipeline = if let Some(init_pipeline) = pipeline_cache.get_compute_pipeline(pipeline.pipeline) {
-            init_pipeline
-        } else {
+        let Some(pipeline) = pipeline_cache.get_compute_pipeline(probe_pipeline.pipeline) else {
             return Ok(());
         };
 
-        for (entity, probe, probe_readback_buffer, probe_readback_buffer_bind_group) in query.iter(world) {
+        let query = self.query.iter_manual(world);
+
+        for (probe, settings) in query {
             let mut pass =
                 render_context
                     .command_encoder()
                     .begin_compute_pass(&ComputePassDescriptor {
-                        label: Some("GPU readback compute pass"),
-                        ..default()
+                        label: Some("probe_compute_pass"),
+                        timestamp_writes: None,
                     });
 
-           
-            pass.set_bind_group(0, &probe_readback_buffer_bind_group.0.unwrap(), &[]);
-            pass.set_pipeline(init_pipeline);
-            pass.dispatch_workgroups(probe.kernel_size() as u32, 1, 1);
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &probe.0, &[]);
+            pass.dispatch_workgroups(
+                settings.kernel_size.x as u32,
+                settings.kernel_size.y as u32,
+                1,
+            );
         }
-        
+
         Ok(())
     }
 }
