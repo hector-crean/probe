@@ -1,19 +1,43 @@
 use bevy::{
-    ecs::system::ParamSet, pbr::{NotShadowCaster, NotShadowReceiver}, prelude::*, render::{
-        render_asset::RenderAssetUsages,
-        render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages},
-    }
+    ecs::system::ParamSet,
+    pbr::{NotShadowCaster, NotShadowReceiver},
+    prelude::*,
+    render::{
+        RenderApp,
+        extract_component::{ExtractComponent, ExtractComponentPlugin, UniformComponentPlugin},
+        gpu_readback::{GpuReadbackPlugin, Readback, ReadbackComplete},
+        render_asset::{RenderAssetUsages, RenderAssets},
+        render_graph::{self, RenderLabel},
+        render_resource::{
+            BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries, BufferUsages,
+            CachedComputePipelineId, ComputePassDescriptor, ComputePipelineDescriptor, Extent3d,
+            PipelineCache, ShaderStages, ShaderType, TextureDimension, TextureFormat,
+            TextureUsages, binding_types::storage_buffer,
+        },
+        renderer::{RenderContext, RenderDevice},
+        storage::{GpuShaderStorageBuffer, ShaderStorageBuffer},
+    },
 };
 
-#[derive(Component)]
-#[require(Camera)]
-pub struct RecorderCamera;
+use crate::probe::Probe;
+
+
+pub struct ProbeVisualizationPlugin;
+
+impl Plugin for ProbeVisualizationPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Startup, Self::setup_recorder_camera);
+        app.add_systems(Update, Self::visualize_recorder_camera);
+        // Also run the visualization system on startup to ensure initial setup
+        app.add_systems(PostStartup, Self::visualize_recorder_camera);
+    }
+}
 
 #[derive(Component)]
-pub struct FrustumWireframeEntity;
+pub struct FrustrumWireframe;
 
 #[derive(Component)]
-pub struct FrustumMonitor;
+pub struct ProbeMonitor;
 
 #[derive(Component)]
 pub struct CameraGizmo;
@@ -59,7 +83,14 @@ impl FrustumWireframe {
         let far_half_height = far * (fov / 2.0).tan();
         let far_half_width = far_half_height * aspect;
 
-        Self::new(near, far, near_half_width, near_half_height, far_half_width, far_half_height)
+        Self::new(
+            near,
+            far,
+            near_half_width,
+            near_half_height,
+            far_half_width,
+            far_half_height,
+        )
     }
 }
 
@@ -75,18 +106,50 @@ impl From<FrustumWireframe> for Mesh {
 
         // Near plane corners
         let near_corners = [
-            Vec3::new(-frustum.near_half_width, -frustum.near_half_height, -frustum.near),
-            Vec3::new(frustum.near_half_width, -frustum.near_half_height, -frustum.near),
-            Vec3::new(frustum.near_half_width, frustum.near_half_height, -frustum.near),
-            Vec3::new(-frustum.near_half_width, frustum.near_half_height, -frustum.near),
+            Vec3::new(
+                -frustum.near_half_width,
+                -frustum.near_half_height,
+                -frustum.near,
+            ),
+            Vec3::new(
+                frustum.near_half_width,
+                -frustum.near_half_height,
+                -frustum.near,
+            ),
+            Vec3::new(
+                frustum.near_half_width,
+                frustum.near_half_height,
+                -frustum.near,
+            ),
+            Vec3::new(
+                -frustum.near_half_width,
+                frustum.near_half_height,
+                -frustum.near,
+            ),
         ];
 
         // Far plane corners
         let far_corners = [
-            Vec3::new(-frustum.far_half_width, -frustum.far_half_height, -frustum.far),
-            Vec3::new(frustum.far_half_width, -frustum.far_half_height, -frustum.far),
-            Vec3::new(frustum.far_half_width, frustum.far_half_height, -frustum.far),
-            Vec3::new(-frustum.far_half_width, frustum.far_half_height, -frustum.far),
+            Vec3::new(
+                -frustum.far_half_width,
+                -frustum.far_half_height,
+                -frustum.far,
+            ),
+            Vec3::new(
+                frustum.far_half_width,
+                -frustum.far_half_height,
+                -frustum.far,
+            ),
+            Vec3::new(
+                frustum.far_half_width,
+                frustum.far_half_height,
+                -frustum.far,
+            ),
+            Vec3::new(
+                -frustum.far_half_width,
+                frustum.far_half_height,
+                -frustum.far,
+            ),
         ];
 
         // Add vertices
@@ -129,7 +192,7 @@ fn create_camera_gizmo_mesh() -> Mesh {
         // X-axis - Right
         Vec3::ZERO,
         Vec3::new(axis_length, 0.0, 0.0),
-        // Y-axis - Up  
+        // Y-axis - Up
         Vec3::ZERO,
         Vec3::new(0.0, axis_length, 0.0),
         // Z-axis - Forward (negative Z in camera space)
@@ -148,11 +211,11 @@ fn create_camera_gizmo_mesh() -> Mesh {
     ];
 
     let indices = vec![
-        0, 1,   // X-axis
-        2, 3,   // Y-axis
-        4, 5,   // Z-axis
-        6, 7,   // Cross line 1
-        8, 9,   // Cross line 2
+        0, 1, // X-axis
+        2, 3, // Y-axis
+        4, 5, // Z-axis
+        6, 7, // Cross line 1
+        8, 9, // Cross line 2
         10, 11, // Center horizontal
         12, 13, // Center vertical
     ];
@@ -162,24 +225,16 @@ fn create_camera_gizmo_mesh() -> Mesh {
     mesh
 }
 
-pub struct RecorderCameraPlugin;
-
-impl Plugin for RecorderCameraPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_systems(Startup, Self::setup_recorder_camera);
-        app.add_systems(Update, Self::visualize_recorder_camera);
-        // Also run the visualization system on startup to ensure initial setup
-        app.add_systems(PostStartup, Self::visualize_recorder_camera);
-    }
-}
-
-impl RecorderCameraPlugin {
+impl ProbeVisualizationPlugin {
     pub fn setup_recorder_camera(
         mut commands: Commands,
         mut images: ResMut<Assets<Image>>,
         mut meshes: ResMut<Assets<Mesh>>,
         mut materials: ResMut<Assets<StandardMaterial>>,
+        mut buffers: ResMut<Assets<ShaderStorageBuffer>>,
     ) {
+      
+
         let size = Extent3d {
             width: 1920,
             height: 1080,
@@ -207,7 +262,6 @@ impl RecorderCameraPlugin {
         // Create the camera that will do the rendering
         let camera_entity = commands
             .spawn((
-                RecorderCamera,
                 Camera3d::default(),
                 Camera {
                     target: image_handle.clone().into(),
@@ -218,16 +272,17 @@ impl RecorderCameraPlugin {
                     near: 2.0,
                     far: 4.0,
                     fov: std::f32::consts::PI / 3.0, // 60 degrees
-                    aspect_ratio, // Explicitly set the aspect ratio
+                    aspect_ratio,                    // Explicitly set the aspect ratio
                 }),
                 Transform::from_translation(Vec3::new(5.0, 3.0, 5.0))
                     .looking_at(Vec3::ZERO, Vec3::Y),
-            )).id();
+            ))
+            .id();
 
         // Create monitor entity
         let monitor_entity = commands
             .spawn((
-                FrustumMonitor,
+                ProbeMonitor,
                 NotShadowCaster,
                 NotShadowReceiver,
                 Mesh3d::from(meshes.add(Plane3d::new(Vec3::Z, Vec2::new(1.0, 1.0)))),
@@ -255,7 +310,7 @@ impl RecorderCameraPlugin {
                 })),
                 NotShadowCaster,
                 NotShadowReceiver,
-                FrustumWireframeEntity,
+                FrustrumWireframe,
             ))
             .id();
 
@@ -284,19 +339,26 @@ impl RecorderCameraPlugin {
     pub fn visualize_recorder_camera(
         mut recorder_camera_query: Query<
             (&Transform, &Projection),
-            (With<RecorderCamera>, Or<(Added<RecorderCamera>, Changed<Transform>, Changed<Projection>)>)
+            (
+                With<Probe>,
+                Or<(Added<Probe>, Changed<Transform>, Changed<Projection>)>,
+            ),
         >,
         mut monitor_query: Query<
             (&mut Transform, &mut Mesh3d),
-            (With<FrustumMonitor>, Without<RecorderCamera>)
+            (With<ProbeMonitor>, Without<Probe>),
         >,
         mut wireframe_query: Query<
             &mut Mesh3d,
-            (With<FrustumWireframeEntity>, Without<FrustumMonitor>, Without<RecorderCamera>)
+            (
+                With<FrustrumWireframe>,
+                Without<ProbeMonitor>,
+                Without<Probe>,
+            ),
         >,
         mut gizmo_query: Query<
             &mut Transform,
-            (With<CameraGizmo>, Without<FrustumMonitor>, Without<RecorderCamera>)
+            (With<CameraGizmo>, Without<ProbeMonitor>, Without<Probe>),
         >,
         mut meshes: ResMut<Assets<Mesh>>,
     ) {
@@ -309,7 +371,10 @@ impl RecorderCameraPlugin {
 
                 // Safety checks to prevent division by zero
                 if near <= 0.0 || far <= near || fov <= 0.0 || aspect <= 0.0 {
-                    warn!("Invalid camera projection parameters: near={}, far={}, fov={}, aspect={}", near, far, fov, aspect);
+                    warn!(
+                        "Invalid camera projection parameters: near={}, far={}, fov={}, aspect={}",
+                        near, far, fov, aspect
+                    );
                     continue;
                 }
 
@@ -322,9 +387,15 @@ impl RecorderCameraPlugin {
                 let far_half_width = far_half_height * aspect;
 
                 // Additional safety check for calculated dimensions
-                if near_half_width <= 0.0 || near_half_height <= 0.0 || far_half_width <= 0.0 || far_half_height <= 0.0 {
-                    warn!("Invalid frustum dimensions calculated: near_half_width={}, near_half_height={}, far_half_width={}, far_half_height={}", 
-                          near_half_width, near_half_height, far_half_width, far_half_height);
+                if near_half_width <= 0.0
+                    || near_half_height <= 0.0
+                    || far_half_width <= 0.0
+                    || far_half_height <= 0.0
+                {
+                    warn!(
+                        "Invalid frustum dimensions calculated: near_half_width={}, near_half_height={}, far_half_width={}, far_half_height={}",
+                        near_half_width, near_half_height, far_half_width, far_half_height
+                    );
                     continue;
                 }
 

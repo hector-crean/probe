@@ -1,5 +1,5 @@
 pub mod camera_controller;
-pub mod frustum;
+pub mod probe;
 
 use std::f32::consts::PI;
 
@@ -15,14 +15,13 @@ use bevy::{
     input::mouse::MouseMotion,
 };
 
-use crate::camera_controller::{CameraControllerPlugin, ControlledCamera, SimpleOrbitCamera};
-use crate::frustum::RecorderCameraPlugin;
+use crate::{camera_controller::{CameraControllerPlugin, ControlledCamera, SimpleOrbitCamera}, probe::ProbePlugin};
 
 pub struct AppPlugin;
 
 impl Plugin for AppPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((DefaultPlugins, CameraControllerPlugin, RecorderCameraPlugin))
+        app.add_plugins((DefaultPlugins, CameraControllerPlugin, ProbePlugin))
             .add_systems(Startup, (setup_camera, setup_cubes, setup_lighting))
             .add_systems(Update, RotateInPlace::update);
     }
