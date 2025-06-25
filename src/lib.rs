@@ -15,13 +15,13 @@ use bevy::{
     input::mouse::MouseMotion,
 };
 
-use crate::{camera_controller::{CameraControllerPlugin, ControlledCamera, SimpleOrbitCamera}, probe::{Probe, ProbePlugin}};
+use crate::{camera_controller::{CameraControllerPlugin, ControlledCamera, SimpleOrbitCamera}, probe::{visualisation::ProbeVisualizationPlugin, Probe, ProbePlugin}};
 
 pub struct AppPlugin;
 
 impl Plugin for AppPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((DefaultPlugins, CameraControllerPlugin, ProbePlugin))
+        app.add_plugins((DefaultPlugins, CameraControllerPlugin, ProbePlugin, ProbeVisualizationPlugin))
             .add_systems(Startup, (setup_main_camera, setup_cubes, setup_lighting, setup_probe_camera))
             .add_systems(Update, RotateInPlace::update);
     }
@@ -83,7 +83,7 @@ fn setup_cubes(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // Define the layer for objects that should be seen by the probe.
-    let probe_visible_layer = RenderLayers::layer(1);
+    // let probe_visible_layer = RenderLayers::layer(1);
 
     // cube
     commands.spawn((
@@ -93,7 +93,7 @@ fn setup_cubes(
         RotateInPlace,
         // Add the layer here. Now only the probe camera will see this cube.
         // The main camera (on layer 0) will not.
-        probe_visible_layer,
+        // probe_visible_layer,
     ));
 }
 
@@ -114,7 +114,9 @@ impl RotateInPlace  {
 fn setup_probe_camera(mut commands: Commands) {
     commands.spawn((
        Transform::from_xyz(10., 0.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
-       Probe,
+       Probe {
+        resolution: UVec2::new(1024, 1024),
+    },
     ));
 }
 

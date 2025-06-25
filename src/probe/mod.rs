@@ -2,10 +2,9 @@ pub mod visualisation;
 
 use bevy::{
     app::{App, Plugin},
-    asset::{AssetServer, Assets, Handle, RenderAssetUsages, load_internal_asset, weak_handle},
+    asset::{load_internal_asset, weak_handle, AssetServer, Assets, Handle, RenderAssetUsages},
     core_pipeline::core_3d::{
-        Camera3d,
-        graph::{Core3d, Node3d},
+        graph::{Core3d, Node3d}, Camera3d
     },
     ecs::{
         component::Component,
@@ -13,33 +12,22 @@ use bevy::{
         event::EventWriter,
         query::{QueryState, With, Without},
         schedule::IntoScheduleConfigs,
-        system::{Commands, Query, Res, ResMut, SystemParamItem, lifetimeless::Read},
+        system::{lifetimeless::Read, Commands, Query, Res, ResMut, SystemParamItem},
         world::{FromWorld, World},
     },
     log::info,
-    math::{Vec2, Vec4},
+    math::{UVec2, Vec2, Vec4},
     prelude::{
         Added, Camera, Color, Image, PluginGroup, Resource, Startup, Transform, Trigger, Update,
     },
     render::{
-        Render, RenderApp, RenderSet,
-        camera::RenderTarget,
-        extract_component::{ExtractComponent, ExtractComponentPlugin},
-        gpu_readback::{GpuReadbackPlugin, Readback, ReadbackComplete},
-        graph::CameraDriverLabel,
-        render_asset::{RenderAsset, RenderAssets},
-        render_graph::{self, RenderGraph, RenderGraphApp, RenderLabel},
-        render_resource::{
+        camera::{PerspectiveProjection, Projection, RenderTarget}, extract_component::{ExtractComponent, ExtractComponentPlugin}, gpu_readback::{GpuReadbackPlugin, Readback, ReadbackComplete}, graph::CameraDriverLabel, render_asset::{RenderAsset, RenderAssets}, render_graph::{self, RenderGraph, RenderGraphApp, RenderLabel}, render_resource::{
             AsBindGroup, BindGroup, BindGroupEntries, BindGroupEntry, BindGroupLayout, Buffer,
             BufferUsages, CachedComputePipelineId, ComputePassDescriptor,
             ComputePipelineDescriptor, Extent3d, PipelineCache, Shader, ShaderRef, ShaderStages,
             ShaderType, StorageBuffer, StorageTextureAccess, TextureDimension, TextureFormat,
             TextureUsages, TextureViewDimension, UniformBuffer,
-        },
-        renderer::{RenderContext, RenderDevice},
-        storage::{GpuShaderStorageBuffer, ShaderStorageBuffer},
-        texture::{FallbackImage, GpuImage},
-        view::RenderLayers,
+        }, renderer::{RenderContext, RenderDevice}, storage::{GpuShaderStorageBuffer, ShaderStorageBuffer}, texture::{FallbackImage, GpuImage}, view::RenderLayers, Render, RenderApp, RenderSet
     },
     utils::default,
 };
@@ -100,10 +88,21 @@ impl FromWorld for ProbeNode {
     }
 }
 
-/// A marker component for a 3D camera that should be probed.
+/// A component for a 3D camera that should be probed.
 #[derive(Component)]
-#[require(Transform)]
-pub struct Probe;
+#[require(Transform, Camera, Camera3d, Projection)]
+pub struct Probe {
+    pub resolution: UVec2,
+}
+impl Default for Probe {
+    fn default() -> Self {
+        Self {
+            resolution: UVec2::new(512, 512),
+        }
+    }
+}
+
+
 
 #[derive(Component, Clone, ExtractComponent, ShaderType)]
 pub struct ProbeSettings {
@@ -164,17 +163,20 @@ impl ProbePlugin {
     fn setup_probe_on_camera(
         mut commands: Commands,
         // This query runs for any camera that has our `Probe` marker but doesn't yet have `ProbeSettings`.
-        camera_query: Query<(Entity), (Added<Probe>, Without<ProbeSettings>, With<Transform>)>,
+        camera_query: Query<(Entity, &Probe), (Added<Probe>, Without<ProbeSettings>)>,
         mut ssbo_assets: ResMut<Assets<ShaderStorageBuffer>>,
         mut images: ResMut<Assets<Image>>,
     ) {
         // This specifies the layer used for the probe pass.
-        let probe_layer = RenderLayers::layer(1);
+        // let probe_layer = RenderLayers::layer(1);
 
-        for (entity) in camera_query.iter() {
+        for (entity, probe) in camera_query.iter() {
+
+            let aspect_ratio = probe.resolution.x as f32 / probe.resolution.y as f32;
+
             let size = Extent3d {
-                width: 512,
-                height: 512,
+                width: probe.resolution.x,
+                height: probe.resolution.y,
                 ..default()
             };
 
@@ -191,9 +193,10 @@ impl ProbePlugin {
                 | TextureUsages::COPY_DST
                 | TextureUsages::RENDER_ATTACHMENT;
 
+
             let image_handle = images.add(image);
 
-            let kernel_size = Vec2::new(16.0, 16.0);
+            let kernel_size = Vec2::new(3., 3.);
             let settings = ProbeSettings {
                 kernel_size,
                 center_coords: Vec2::new(0.5, 0.5),
@@ -215,9 +218,15 @@ impl ProbePlugin {
                         ..default()
                     },
                     Camera3d::default(),
-                    probe_layer.clone(),
+                    // probe_layer.clone(),
                     // The `ProbeBindGroup` contains all the data needed by the shader.
                     // Bevy will automatically extract this to the render world.
+                    Projection::Perspective(PerspectiveProjection {
+                        near: 2.0,
+                        far: 4.0,
+                        fov: std::f32::consts::PI / 3.0, // 60 degrees
+                        aspect_ratio,                    // Explicitly set the aspect ratio
+                    }),
                     ProbeBindGroup {
                         settings,
                         source_texture: image_handle,
