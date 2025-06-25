@@ -15,20 +15,20 @@ use bevy::{
     input::mouse::MouseMotion,
 };
 
-use crate::{camera_controller::{CameraControllerPlugin, ControlledCamera, SimpleOrbitCamera}, probe::ProbePlugin};
+use crate::{camera_controller::{CameraControllerPlugin, ControlledCamera, SimpleOrbitCamera}, probe::{Probe, ProbePlugin}};
 
 pub struct AppPlugin;
 
 impl Plugin for AppPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((DefaultPlugins, CameraControllerPlugin, ProbePlugin))
-            .add_systems(Startup, (setup_camera, setup_cubes, setup_lighting))
+            .add_systems(Startup, (setup_main_camera, setup_cubes, setup_lighting, setup_probe_camera))
             .add_systems(Update, RotateInPlace::update);
     }
 }
 
 
-pub fn setup_camera(mut commands: Commands) {
+pub fn setup_main_camera(mut commands: Commands) {
     commands.spawn((
         SimpleOrbitCamera {
             target: Vec3::ZERO,
@@ -98,4 +98,13 @@ impl RotateInPlace  {
             transform.rotate(Quat::from_rotation_y(time.delta_secs()));
         }
     }
+}
+
+
+fn setup_probe_camera(mut commands: Commands) {
+    commands.spawn((
+       Camera3d::default(),
+       Transform::from_xyz(10., 0.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
+       Probe,
+    ));
 }

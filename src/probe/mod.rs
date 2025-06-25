@@ -1,15 +1,16 @@
 pub mod visualisation;
+
 use bevy::{
     app::{App, Plugin},
     asset::{AssetServer, Assets, Handle, load_internal_asset, weak_handle},
-    core_pipeline::core_3d::graph::Core3d,
+    core_pipeline::core_3d::graph::{Core3d, Node3d},
     ecs::{
         component::Component,
         entity::Entity,
         event::EventWriter,
         query::{QueryState, With, Without},
         schedule::IntoScheduleConfigs,
-        system::{Commands, Query, Res, ResMut, SystemParamItem},
+        system::{Commands, Query, Res, ResMut, SystemParamItem, lifetimeless::Read},
         world::{FromWorld, World},
     },
     log::info,
@@ -27,7 +28,7 @@ use bevy::{
             BufferUsages, CachedComputePipelineId, ComputePassDescriptor,
             ComputePipelineDescriptor, PipelineCache, Shader, ShaderRef, ShaderStages, ShaderType,
             StorageBuffer, StorageTextureAccess, TextureFormat, TextureUsages,
-            TextureViewDimension, UniformBuffer
+            TextureViewDimension, UniformBuffer,
         },
         renderer::{RenderContext, RenderDevice},
         storage::{GpuShaderStorageBuffer, ShaderStorageBuffer},
@@ -49,22 +50,26 @@ impl Plugin for ProbePlugin {
             Shader::from_wgsl
         );
 
-        app.add_plugins((ExtractComponentPlugin::<ProbeSettings>::default(),))
-            .add_systems(Update, Self::setup_probe_on_camera);
+        app.add_plugins((
+            ExtractComponentPlugin::<ProbeSettings>::default(),
+            ExtractComponentPlugin::<ProbeBindGroup>::default(),
+        ))
+        .add_systems(Update, Self::setup_probe_on_camera);
     }
 
     fn finish(&self, app: &mut App) {
         let render_app = app.sub_app_mut(RenderApp);
 
-        render_app.init_resource::<ProbePipeline>().add_systems(
-            Render,
-            Self::prepare_probe_bind_groups.in_set(RenderSet::PrepareBindGroups),
-        );
-
-        let world = render_app.world_mut();
-        let mut render_graph = world.resource_mut::<RenderGraph>();
-
-        // render_graph.add_node(ProbeNodeLabel, ProbeNode::from_world(world));
+        render_app
+            .init_resource::<ProbePipeline>()
+            .add_systems(
+                Render,
+                (Self::prepare_probe_bind_groups)
+                    .chain()
+                    .in_set(RenderSet::PrepareBindGroups),
+            )
+            .add_render_graph_node::<ProbeNode>(Core3d, ProbeNodeLabel)
+            .add_render_graph_edge(Core3d, Node3d::EndMainPass, ProbeNodeLabel);
     }
 }
 
@@ -74,14 +79,16 @@ const PROBE_SHADER_HANDLE: Handle<Shader> = weak_handle!("5db828ff-9ee5-4c25-a12
 #[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
 pub struct ProbeNodeLabel;
 
+/// The render graph node that executes the probe compute shader.
 struct ProbeNode {
-    query: QueryState<(&'static PreparedProbe, &'static ProbeSettings)>,
+    // We query for probes that are ready to be processed.
+    query: QueryState<(Read<PreparedProbe>, Read<ProbeSettings>)>,
 }
 
 impl FromWorld for ProbeNode {
     fn from_world(world: &mut World) -> Self {
         Self {
-            query: world.query::<(&PreparedProbe, &ProbeSettings)>(),
+            query: world.query_filtered::<(Read<PreparedProbe>, Read<ProbeSettings>), ()>(),
         }
     }
 }
@@ -105,7 +112,7 @@ pub struct ProbeSettings {
 struct PreparedProbe(BindGroup);
 
 /// This is the data that will be bound to the compute shader.
-#[derive(Component, AsBindGroup)]
+#[derive(Component, AsBindGroup, ExtractComponent, Clone)]
 struct ProbeBindGroup {
     #[uniform(0)]
     settings: ProbeSettings,
@@ -219,6 +226,9 @@ impl ProbePlugin {
 
 /// The render graph node that executes the probe compute shader.
 impl render_graph::Node for ProbeNode {
+    fn update(&mut self, world: &mut World) {
+        self.query.update_archetypes(world);
+    }
     fn run(
         &self,
         _graph: &mut render_graph::RenderGraphContext,
@@ -232,9 +242,7 @@ impl render_graph::Node for ProbeNode {
             return Ok(());
         };
 
-        let query = self.query.iter_manual(world);
-
-        for (probe, settings) in query {
+        for (probe, settings) in self.query.iter_manual(world) {
             let mut pass =
                 render_context
                     .command_encoder()
