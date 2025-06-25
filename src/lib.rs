@@ -77,13 +77,23 @@ fn setup_lighting(mut commands: Commands) {
 }
 
 
-fn setup_cubes(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
+fn setup_cubes(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    // Define the layer for objects that should be seen by the probe.
+    let probe_visible_layer = RenderLayers::layer(1);
+
     // cube
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(1.0, 1.0, 1.0))),
         MeshMaterial3d(materials.add(Color::srgb_u8(124, 144, 255))),
         Transform::from_xyz(0.0, 0.5, 0.0),
         RotateInPlace,
+        // Add the layer here. Now only the probe camera will see this cube.
+        // The main camera (on layer 0) will not.
+        probe_visible_layer,
     ));
 }
 
@@ -103,8 +113,17 @@ impl RotateInPlace  {
 
 fn setup_probe_camera(mut commands: Commands) {
     commands.spawn((
-       Camera3d::default(),
        Transform::from_xyz(10., 0.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
        Probe,
     ));
 }
+
+
+
+
+
+
+
+
+
+//https://hackmd.io/@bevy/rendering_summary

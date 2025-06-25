@@ -2,8 +2,11 @@ pub mod visualisation;
 
 use bevy::{
     app::{App, Plugin},
-    asset::{AssetServer, Assets, Handle, load_internal_asset, weak_handle},
-    core_pipeline::core_3d::graph::{Core3d, Node3d},
+    asset::{AssetServer, Assets, Handle, RenderAssetUsages, load_internal_asset, weak_handle},
+    core_pipeline::core_3d::{
+        Camera3d,
+        graph::{Core3d, Node3d},
+    },
     ecs::{
         component::Component,
         entity::Entity,
@@ -15,9 +18,12 @@ use bevy::{
     },
     log::info,
     math::{Vec2, Vec4},
-    prelude::{Added, Camera, Color, Image, PluginGroup, Resource, Startup, Trigger, Update},
+    prelude::{
+        Added, Camera, Color, Image, PluginGroup, Resource, Startup, Transform, Trigger, Update,
+    },
     render::{
         Render, RenderApp, RenderSet,
+        camera::RenderTarget,
         extract_component::{ExtractComponent, ExtractComponentPlugin},
         gpu_readback::{GpuReadbackPlugin, Readback, ReadbackComplete},
         graph::CameraDriverLabel,
@@ -26,13 +32,14 @@ use bevy::{
         render_resource::{
             AsBindGroup, BindGroup, BindGroupEntries, BindGroupEntry, BindGroupLayout, Buffer,
             BufferUsages, CachedComputePipelineId, ComputePassDescriptor,
-            ComputePipelineDescriptor, PipelineCache, Shader, ShaderRef, ShaderStages, ShaderType,
-            StorageBuffer, StorageTextureAccess, TextureFormat, TextureUsages,
-            TextureViewDimension, UniformBuffer,
+            ComputePipelineDescriptor, Extent3d, PipelineCache, Shader, ShaderRef, ShaderStages,
+            ShaderType, StorageBuffer, StorageTextureAccess, TextureDimension, TextureFormat,
+            TextureUsages, TextureViewDimension, UniformBuffer,
         },
         renderer::{RenderContext, RenderDevice},
         storage::{GpuShaderStorageBuffer, ShaderStorageBuffer},
         texture::{FallbackImage, GpuImage},
+        view::RenderLayers,
     },
     utils::default,
 };
@@ -95,6 +102,7 @@ impl FromWorld for ProbeNode {
 
 /// A marker component for a 3D camera that should be probed.
 #[derive(Component)]
+#[require(Transform)]
 pub struct Probe;
 
 #[derive(Component, Clone, ExtractComponent, ShaderType)]
@@ -116,9 +124,10 @@ struct PreparedProbe(BindGroup);
 struct ProbeBindGroup {
     #[uniform(0)]
     settings: ProbeSettings,
-    #[storage_texture(1, access = ReadOnly)]
+    #[texture(1)]
+    #[sampler(2)]
     source_texture: Handle<Image>,
-    #[storage(2, visibility(compute))]
+    #[storage(3, visibility(compute))]
     output_buffer: Handle<ShaderStorageBuffer>,
 }
 
@@ -155,15 +164,34 @@ impl ProbePlugin {
     fn setup_probe_on_camera(
         mut commands: Commands,
         // This query runs for any camera that has our `Probe` marker but doesn't yet have `ProbeSettings`.
-        camera_query: Query<(Entity, &Camera), (Added<Probe>, Without<ProbeSettings>)>,
+        camera_query: Query<(Entity), (Added<Probe>, Without<ProbeSettings>, With<Transform>)>,
         mut ssbo_assets: ResMut<Assets<ShaderStorageBuffer>>,
+        mut images: ResMut<Assets<Image>>,
     ) {
-        for (entity, camera) in camera_query.iter() {
-            let Some(render_target) = camera.target.as_image().cloned() else {
-                // This probe setup only works when rendering to a texture.
-                // You could extend it to work with the primary window.
-                continue;
+        // This specifies the layer used for the probe pass.
+        let probe_layer = RenderLayers::layer(1);
+
+        for (entity) in camera_query.iter() {
+            let size = Extent3d {
+                width: 512,
+                height: 512,
+                ..default()
             };
+
+            // This is the texture that will be rendered to.
+            let mut image = Image::new_fill(
+                size,
+                TextureDimension::D2,
+                &[0, 0, 0, 0],
+                TextureFormat::Bgra8UnormSrgb,
+                RenderAssetUsages::default(),
+            );
+            // You need to set ALL the usage flags for how the image will be used.
+            image.texture_descriptor.usage = TextureUsages::TEXTURE_BINDING
+                | TextureUsages::COPY_DST
+                | TextureUsages::RENDER_ATTACHMENT;
+
+            let image_handle = images.add(image);
 
             let kernel_size = Vec2::new(16.0, 16.0);
             let settings = ProbeSettings {
@@ -181,11 +209,18 @@ impl ProbePlugin {
                 .entity(entity)
                 .insert((
                     settings.clone(),
+                    Camera {
+                        // Render to our texture instead of the main window
+                        target: RenderTarget::Image(image_handle.clone().into()),
+                        ..default()
+                    },
+                    Camera3d::default(),
+                    probe_layer.clone(),
                     // The `ProbeBindGroup` contains all the data needed by the shader.
                     // Bevy will automatically extract this to the render world.
                     ProbeBindGroup {
                         settings,
-                        source_texture: render_target,
+                        source_texture: image_handle,
                         output_buffer: ssbo_handle.clone(),
                     },
                     Readback::buffer(ssbo_handle),
