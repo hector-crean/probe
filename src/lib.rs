@@ -44,8 +44,12 @@ pub fn setup_main_camera(mut commands: Commands) {
 }
 
 fn setup_lighting(mut commands: Commands) {
-     // Add ambient light with improved settings
-     commands.insert_resource(AmbientLight {
+    // This specifies that the lights should affect both layer 0 (main scene)
+    // and layer 1 (probe scene).
+    let light_layers = RenderLayers::layer(0).with(1);
+
+    // Add ambient light with improved settings
+    commands.insert_resource(AmbientLight {
         color: Color::srgb(0.9, 0.9, 1.0), // Slightly blue-tinted white for better atmosphere
         brightness: 0.4,                  // Increased brightness for better visibility
         affects_lightmapped_meshes: true,
@@ -62,6 +66,7 @@ fn setup_lighting(mut commands: Commands) {
             ..default()
         },
         Transform::from_xyz(4.0, 8.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
+        light_layers.clone(),
     ));
 
     // Add secondary fill light (opposite direction, lower intensity)
@@ -73,6 +78,7 @@ fn setup_lighting(mut commands: Commands) {
             ..default()
         },
         Transform::from_xyz(-3.0, 5.0, -3.0).looking_at(Vec3::ZERO, Vec3::Y),
+        light_layers,
     ));
 }
 
@@ -113,7 +119,7 @@ impl RotateInPlace  {
 
 fn setup_probe_camera(mut commands: Commands) {
     commands.spawn((
-       Transform::from_xyz(10., 0.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
+       Transform::from_xyz(4.0, 0.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
        Probe {
         resolution: UVec2::new(1024, 1024),
     },

@@ -25,9 +25,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let kernel_dims = vec2<u32>(settings.kernel_size);
     // Prevent reading/writing out of bounds if the dispatch size doesn't
     // perfectly match the buffer size.
-    if (id.x >= kernel_dims.x || id.y >= kernel_dims.y) {
-        return;
-    }
+
+
+    // if (id.x >= kernel_dims.x || id.y >= kernel_dims.y) {
+    //     return;
+    // }
 
     // Get the full dimensions of the source texture.
     let texture_dims = vec2<f32>(textureDimensions(source_texture));
