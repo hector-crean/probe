@@ -3,7 +3,7 @@
 
 ![Rerun Probe](assets/rerun-probe.png)
 
-Rerun's platform includes a movable 'camera', which renders its view to a render target. We can then sample this
+[Rerun](https://rerun.io/) includes a movable 'camera', which renders its view to a render target. We can then sample this
 render target to see the pixel colours at particular points on the render target. 
 
 This repo is an attempt to recreate this in bevy.
