@@ -2,9 +2,10 @@ pub mod visualisation;
 
 use bevy::{
     app::{App, Plugin},
-    asset::{load_internal_asset, weak_handle, AssetServer, Assets, Handle, RenderAssetUsages},
+    asset::{AssetServer, Assets, Handle, RenderAssetUsages, load_internal_asset, weak_handle},
     core_pipeline::core_3d::{
-        graph::{Core3d, Node3d}, Camera3d
+        Camera3d,
+        graph::{Core3d, Node3d},
     },
     ecs::{
         component::Component,
@@ -12,7 +13,7 @@ use bevy::{
         event::EventWriter,
         query::{QueryState, With, Without},
         schedule::IntoScheduleConfigs,
-        system::{lifetimeless::Read, Commands, Query, Res, ResMut, SystemParamItem},
+        system::{Commands, Query, Res, ResMut, SystemParamItem, lifetimeless::Read},
         world::{FromWorld, World},
     },
     log::info,
@@ -21,13 +22,24 @@ use bevy::{
         Added, Camera, Color, Image, PluginGroup, Resource, Startup, Transform, Trigger, Update,
     },
     render::{
-        camera::{PerspectiveProjection, Projection, RenderTarget}, extract_component::{ExtractComponent, ExtractComponentPlugin}, gpu_readback::{GpuReadbackPlugin, Readback, ReadbackComplete}, graph::CameraDriverLabel, render_asset::{RenderAsset, RenderAssets}, render_graph::{self, RenderGraph, RenderGraphApp, RenderLabel}, render_resource::{
+        Render, RenderApp, RenderSet,
+        camera::{PerspectiveProjection, Projection, RenderTarget},
+        extract_component::{ExtractComponent, ExtractComponentPlugin},
+        gpu_readback::{GpuReadbackPlugin, Readback, ReadbackComplete},
+        graph::CameraDriverLabel,
+        render_asset::{RenderAsset, RenderAssets},
+        render_graph::{self, RenderGraph, RenderGraphApp, RenderLabel},
+        render_resource::{
             AsBindGroup, BindGroup, BindGroupEntries, BindGroupEntry, BindGroupLayout, Buffer,
             BufferUsages, CachedComputePipelineId, ComputePassDescriptor,
-            ComputePipelineDescriptor, Extent3d, PipelineCache, Shader, ShaderRef, ShaderStages,
-            ShaderType, StorageBuffer, StorageTextureAccess, TextureDimension, TextureFormat,
-            TextureUsages, TextureViewDimension, UniformBuffer,
-        }, renderer::{RenderContext, RenderDevice}, storage::{GpuShaderStorageBuffer, ShaderStorageBuffer}, texture::{FallbackImage, GpuImage}, view::RenderLayers, Render, RenderApp, RenderSet
+            ComputePipelineDescriptor, Extent3d, PipelineCache, Shader, ShaderRef, ShaderSource,
+            ShaderStages, ShaderType, StorageBuffer, StorageTextureAccess, TextureDimension,
+            TextureFormat, TextureUsages, TextureViewDimension, UniformBuffer,
+        },
+        renderer::{RenderContext, RenderDevice},
+        storage::{GpuShaderStorageBuffer, ShaderStorageBuffer},
+        texture::{FallbackImage, GpuImage},
+        view::RenderLayers,
     },
     utils::default,
 };
@@ -37,14 +49,6 @@ pub struct ProbePlugin;
 
 impl Plugin for ProbePlugin {
     fn build(&self, app: &mut App) {
-        // This asset is needed by the probe pipeline.
-        load_internal_asset!(
-            app,
-            PROBE_SHADER_HANDLE,
-            "probe_readback.wgsl",
-            Shader::from_wgsl
-        );
-
         app.add_plugins((
             ExtractComponentPlugin::<ProbeSettings>::default(),
             ExtractComponentPlugin::<ProbeBindGroup>::default(),
@@ -67,9 +71,6 @@ impl Plugin for ProbePlugin {
             .add_render_graph_edge(Core3d, Node3d::EndMainPass, ProbeNodeLabel);
     }
 }
-
-/// Handle to the compute shader used by the probe.
-const PROBE_SHADER_HANDLE: Handle<Shader> = weak_handle!("5db828ff-9ee5-4c25-a12a-886e2aeb096d");
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
 pub struct ProbeNodeLabel;
@@ -102,8 +103,6 @@ impl Default for Probe {
     }
 }
 
-
-
 #[derive(Component, Clone, ExtractComponent, ShaderType)]
 pub struct ProbeSettings {
     /// Size of the kernel in pixels.
@@ -120,13 +119,12 @@ struct PreparedProbe(BindGroup);
 
 /// This is the data that will be bound to the compute shader.
 #[derive(Component, AsBindGroup, ExtractComponent, Clone)]
-struct ProbeBindGroup {
+pub struct ProbeBindGroup {
     #[uniform(0)]
     settings: ProbeSettings,
-    #[texture(1)]
-    #[sampler(2)]
+    #[texture(1, visibility(compute))]
     source_texture: Handle<Image>,
-    #[storage(3, visibility(compute))]
+    #[storage(2, visibility(compute))]
     output_buffer: Handle<ShaderStorageBuffer>,
 }
 
@@ -134,7 +132,9 @@ struct ProbeBindGroup {
 #[derive(Resource)]
 struct ProbePipeline {
     layout: BindGroupLayout,
-    pipeline: CachedComputePipelineId,
+    small_pipeline: CachedComputePipelineId, // For kernels <= 4x4
+    medium_pipeline: CachedComputePipelineId, // For kernels 5x5 to 16x16
+    large_pipeline: CachedComputePipelineId, // For kernels > 16x16
 }
 
 impl FromWorld for ProbePipeline {
@@ -144,17 +144,48 @@ impl FromWorld for ProbePipeline {
         let layout = ProbeBindGroup::bind_group_layout(render_device);
 
         let pipeline_cache = world.resource::<PipelineCache>();
-        let pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+        let asset_server = world.resource::<AssetServer>();
+
+        let kernel_small_shader = wesl::include_wesl!("kernel_small");
+        let kernel_medium_shader = wesl::include_wesl!("kernel_medium");
+        let kernel_large_shader = wesl::include_wesl!("kernel_large");
+
+        let small_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
             zero_initialize_workgroup_memory: false,
-            label: Some("probe_pipeline".into()),
+            label: Some("probe_pipeline_small_wesl".into()),
             layout: vec![layout.clone()],
-            shader: PROBE_SHADER_HANDLE,
+            shader: kernel_small_shader.into(),
             shader_defs: vec![],
             entry_point: "main".into(),
             push_constant_ranges: vec![],
         });
 
-        Self { layout, pipeline }
+        let medium_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+            zero_initialize_workgroup_memory: false,
+            label: Some("probe_pipeline_medium_wesl".into()),
+            layout: vec![layout.clone()],
+            shader: kernel_medium_shader.into(),
+            shader_defs: vec![],
+            entry_point: "main".into(),
+            push_constant_ranges: vec![],
+        });
+
+        let large_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
+            zero_initialize_workgroup_memory: false,
+            label: Some("probe_pipeline_large_wesl".into()),
+            layout: vec![layout.clone()],
+            shader: kernel_large_shader.into(),
+            shader_defs: vec![],
+            entry_point: "main".into(),
+            push_constant_ranges: vec![],c
+        });
+
+        Self {
+            layout,
+            small_pipeline,
+            medium_pipeline,
+            large_pipeline,
+        }
     }
 }
 
@@ -171,7 +202,6 @@ impl ProbePlugin {
         // let probe_layer = RenderLayers::layer(1);
 
         for (entity, probe) in camera_query.iter() {
-
             let aspect_ratio = probe.resolution.x as f32 / probe.resolution.y as f32;
 
             let size = Extent3d {
@@ -192,7 +222,6 @@ impl ProbePlugin {
             image.texture_descriptor.usage = TextureUsages::TEXTURE_BINDING
                 | TextureUsages::COPY_DST
                 | TextureUsages::RENDER_ATTACHMENT;
-
 
             let image_handle = images.add(image);
 
@@ -282,11 +311,25 @@ impl render_graph::Node for ProbeNode {
         let pipeline_cache = world.resource::<PipelineCache>();
         let probe_pipeline = world.resource::<ProbePipeline>();
 
-        let Some(pipeline) = pipeline_cache.get_compute_pipeline(probe_pipeline.pipeline) else {
-            return Ok(());
-        };
-
         for (probe, settings) in self.query.iter_manual(world) {
+            // Choose pipeline based on kernel size
+            let kernel_area = settings.kernel_size.x * settings.kernel_size.y;
+
+            let (pipeline_id, dispatch_type) = if kernel_area <= 16.0 {
+                // 4x4 or smaller - use small pipeline (1x1 workgroups)
+                (probe_pipeline.small_pipeline, "small")
+            } else if kernel_area <= 256.0 {
+                // 5x5 to 16x16 - use medium pipeline (8x8 workgroups)
+                (probe_pipeline.medium_pipeline, "medium")
+            } else {
+                // Larger than 16x16 - use large pipeline (16x16 workgroups)
+                (probe_pipeline.large_pipeline, "large")
+            };
+
+            let Some(pipeline) = pipeline_cache.get_compute_pipeline(pipeline_id) else {
+                continue;
+            };
+
             let mut pass =
                 render_context
                     .command_encoder()
@@ -297,11 +340,30 @@ impl render_graph::Node for ProbeNode {
 
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &probe.0, &[]);
-            pass.dispatch_workgroups(
-                settings.kernel_size.x as u32,
-                settings.kernel_size.y as u32,
-                1,
-            );
+
+            match dispatch_type {
+                "small" => {
+                    // Small pipeline uses 1x1 workgroups - dispatch one per pixel
+                    pass.dispatch_workgroups(
+                        settings.kernel_size.x as u32,
+                        settings.kernel_size.y as u32,
+                        1,
+                    );
+                }
+                "medium" => {
+                    // Medium pipeline uses 8x8 workgroups - calculate needed workgroups
+                    let workgroups_x = (settings.kernel_size.x as u32 + 7) / 8;
+                    let workgroups_y = (settings.kernel_size.y as u32 + 7) / 8;
+                    pass.dispatch_workgroups(workgroups_x.max(1), workgroups_y.max(1), 1);
+                }
+                "large" => {
+                    // Large pipeline uses 16x16 workgroups - calculate needed workgroups
+                    let workgroups_x = (settings.kernel_size.x as u32 + 15) / 16;
+                    let workgroups_y = (settings.kernel_size.y as u32 + 15) / 16;
+                    pass.dispatch_workgroups(workgroups_x.max(1), workgroups_y.max(1), 1);
+                }
+                _ => unreachable!(),
+            }
         }
 
         Ok(())

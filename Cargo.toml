@@ -4,4 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = "0.16.1"
+bevy = { version = "0.16.1", features = ["shader_format_wesl"] }
+wesl = { version = "0.1.2" }
+
+
+[build-dependencies]
+wesl = { version = "0.1.2" }
