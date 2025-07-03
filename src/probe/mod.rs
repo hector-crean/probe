@@ -44,11 +44,39 @@ use bevy::{
     utils::default,
 };
 
+const PROBE_KERNEL_SMALL_SHADER_HANDLE: Handle<Shader> = weak_handle!("5eb828ff-9ee5-4c25-a12a-886e2aeb096d");
+const PROBE_KERNEL_MEDIUM_SHADER_HANDLE: Handle<Shader> = weak_handle!("5db818ff-9ee5-4c25-a12a-886e2aeb096d");
+const PROBE_KERNEL_LARGE_SHADER_HANDLE: Handle<Shader> = weak_handle!("5db827ff-9ee5-4c25-a12a-886e2aeb096d");
+
+
 /// This plugin provides the components and systems for GPU-based render target probing.
 pub struct ProbePlugin;
 
 impl Plugin for ProbePlugin {
     fn build(&self, app: &mut App) {
+
+        load_internal_asset!(
+            app,
+            PROBE_KERNEL_SMALL_SHADER_HANDLE,
+            "shaders/kernel_small.wesl",
+            Shader::from_wesl
+        );
+
+        load_internal_asset!(
+            app,
+            PROBE_KERNEL_MEDIUM_SHADER_HANDLE,
+            "shaders/kernel_medium.wesl",
+            Shader::from_wesl
+        );
+
+        load_internal_asset!(
+            app,
+            PROBE_KERNEL_LARGE_SHADER_HANDLE,
+            "shaders/kernel_large.wesl",
+            Shader::from_wesl
+        );
+
+
         app.add_plugins((
             ExtractComponentPlugin::<ProbeSettings>::default(),
             ExtractComponentPlugin::<ProbeBindGroup>::default(),
@@ -146,15 +174,13 @@ impl FromWorld for ProbePipeline {
         let pipeline_cache = world.resource::<PipelineCache>();
         let asset_server = world.resource::<AssetServer>();
 
-        let kernel_small_shader = wesl::include_wesl!("kernel_small");
-        let kernel_medium_shader = wesl::include_wesl!("kernel_medium");
-        let kernel_large_shader = wesl::include_wesl!("kernel_large");
+      
 
         let small_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
             zero_initialize_workgroup_memory: false,
             label: Some("probe_pipeline_small_wesl".into()),
             layout: vec![layout.clone()],
-            shader: kernel_small_shader.into(),
+            shader: PROBE_KERNEL_SMALL_SHADER_HANDLE,
             shader_defs: vec![],
             entry_point: "main".into(),
             push_constant_ranges: vec![],
@@ -164,7 +190,7 @@ impl FromWorld for ProbePipeline {
             zero_initialize_workgroup_memory: false,
             label: Some("probe_pipeline_medium_wesl".into()),
             layout: vec![layout.clone()],
-            shader: kernel_medium_shader.into(),
+            shader: PROBE_KERNEL_MEDIUM_SHADER_HANDLE,
             shader_defs: vec![],
             entry_point: "main".into(),
             push_constant_ranges: vec![],
@@ -174,10 +200,10 @@ impl FromWorld for ProbePipeline {
             zero_initialize_workgroup_memory: false,
             label: Some("probe_pipeline_large_wesl".into()),
             layout: vec![layout.clone()],
-            shader: kernel_large_shader.into(),
+            shader: PROBE_KERNEL_LARGE_SHADER_HANDLE,
             shader_defs: vec![],
             entry_point: "main".into(),
-            push_constant_ranges: vec![],c
+            push_constant_ranges: vec![],
         });
 
         Self {
