@@ -125,9 +125,9 @@ pub struct RotateInPlace;
 
 impl RotateInPlace {
     fn update(mut query: Query<&mut Transform, With<RotateInPlace>>, time: Res<Time>) {
-        for mut transform in query.iter_mut() {
-            transform.rotate(Quat::from_rotation_y(time.delta_secs()));
-        }
+        // for mut transform in query.iter_mut() {
+        //     transform.rotate(Quat::from_rotation_y(time.delta_secs()));
+        // }
     }
 }
 

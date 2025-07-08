@@ -19,8 +19,9 @@ use bevy::{
     log::info,
     math::{UVec2, Vec2, Vec4},
     prelude::{
-        Added, Camera, Color, Image, PluginGroup, Resource, Startup, Transform, Trigger, Update,
+        Added, Camera, Children, Color, Image, PluginGroup, Resource, Startup, Transform, Trigger, Update,
     },
+    ui::prelude::*,
     render::{
         Render, RenderApp, RenderSet,
         camera::{PerspectiveProjection, Projection, RenderTarget},
@@ -47,6 +48,21 @@ use bevy::{
 const PROBE_KERNEL_SMALL_SHADER_HANDLE: Handle<Shader> = weak_handle!("5eb828ff-9ee5-4c25-a12a-886e2aeb096d");
 const PROBE_KERNEL_MEDIUM_SHADER_HANDLE: Handle<Shader> = weak_handle!("5db818ff-9ee5-4c25-a12a-886e2aeb096d");
 const PROBE_KERNEL_LARGE_SHADER_HANDLE: Handle<Shader> = weak_handle!("5db827ff-9ee5-4c25-a12a-886e2aeb096d");
+
+/// Resource to store the current kernel data for UI visualization
+#[derive(Resource, Default)]
+pub struct KernelDataResource {
+    pub data: Vec<Vec4>,
+    pub kernel_size: Vec2,
+}
+
+/// Marker component for the kernel visualization UI
+#[derive(Component)]
+pub struct KernelVisualizationUI;
+
+/// Marker component for the kernel grid container
+#[derive(Component)]
+pub struct KernelGrid;
 
 
 /// This plugin provides the components and systems for GPU-based render target probing.
@@ -81,7 +97,9 @@ impl Plugin for ProbePlugin {
             ExtractComponentPlugin::<ProbeSettings>::default(),
             ExtractComponentPlugin::<ProbeBindGroup>::default(),
         ))
-        .add_systems(Update, Self::setup_probe_on_camera);
+        .init_resource::<KernelDataResource>()
+        .add_systems(Startup, Self::setup_kernel_visualization_ui)
+        .add_systems(Update, (Self::setup_probe_on_camera, Self::update_kernel_visualization_ui));
     }
 
     fn finish(&self, app: &mut App) {
@@ -289,11 +307,16 @@ impl ProbePlugin {
                     },
                     Readback::buffer(ssbo_handle),
                 ))
-                .observe(|trigger: Trigger<ReadbackComplete>| {
+                .observe(move |trigger: Trigger<ReadbackComplete>, mut kernel_data: ResMut<KernelDataResource>| {
                     // This matches the type which was used to create the `ShaderStorageBuffer` above,
                     // and is a convenient way to interpret the data.
-                    let data: Vec<Vec4> = trigger.event().to_shader_type();
-                    info!("Buffer {:?}", data);
+                    let kernel: Vec<Vec4> = trigger.event().to_shader_type();
+                    
+                    // Update the kernel data resource for UI visualization
+                    kernel_data.data = kernel;
+                    kernel_data.kernel_size = kernel_size; // Use the actual kernel size
+                    
+                    // info!("Buffer {:?}", kernel_data.data);
                 });
         }
     }
@@ -320,6 +343,139 @@ impl ProbePlugin {
                 .entity(entity)
                 .insert(PreparedProbe(bind_group.bind_group));
         }
+    }
+
+    /// Sets up the kernel visualization UI
+    fn setup_kernel_visualization_ui(mut commands: Commands) {
+        // Create a UI panel to show kernel data as colored grid
+        commands
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    top: Val::Px(10.0),
+                    right: Val::Px(10.0),
+                    width: Val::Px(200.0),
+                    padding: UiRect::all(Val::Px(10.0)),
+                    flex_direction: FlexDirection::Column,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.8)),
+                KernelVisualizationUI,
+            ))
+            .with_children(|parent| {
+                // Title
+                parent.spawn(Text::new("Kernel Data"));
+                
+                // Grid container that will hold the colored squares
+                parent.spawn((
+                    Node {
+                        display: Display::Grid,
+                        grid_template_columns: vec![GridTrack::px(30.0); 3], // 3x3 grid initially
+                        grid_template_rows: vec![GridTrack::px(30.0); 3],
+                        column_gap: Val::Px(2.0),
+                        row_gap: Val::Px(2.0),
+                        margin: UiRect::top(Val::Px(10.0)),
+                        ..default()
+                    },
+                    KernelGrid,
+                ));
+            });
+    }
+
+    /// Updates the kernel visualization UI with current data
+    fn update_kernel_visualization_ui(
+        mut commands: Commands,
+        grid_query: Query<Entity, With<KernelGrid>>,
+        kernel_data: Res<KernelDataResource>,
+        children_query: Query<&Children>,
+        mut background_query: Query<&mut BackgroundColor>,
+        mut text_query: Query<&mut Text>,
+    ) {
+        // Only update if kernel data is not empty
+        if kernel_data.data.is_empty() {
+            return;
+        }
+
+        for grid_entity in grid_query.iter() {
+            // Check if grid already has children (squares)
+            if let Ok(children) = children_query.get(grid_entity) {
+                if children.len() != kernel_data.data.len() {
+                    // Grid size changed, need to rebuild
+                    for &child in children.iter() {
+                        commands.entity(child).despawn_recursive();
+                    }
+                    Self::create_kernel_grid(&mut commands, grid_entity, &kernel_data);
+                } else {
+                    // Update existing squares
+                    for (index, &child) in children.iter().enumerate() {
+                        if index < kernel_data.data.len() {
+                            let pixel = &kernel_data.data[index];
+                            let color = Color::srgba(
+                                pixel.x.clamp(0.0, 1.0),
+                                pixel.y.clamp(0.0, 1.0), 
+                                pixel.z.clamp(0.0, 1.0),
+                                1.0,
+                            );
+                            
+                            if let Ok(mut bg_color) = background_query.get_mut(child) {
+                                *bg_color = BackgroundColor(color);
+                            }
+                            
+                            // Update text in grandchildren if exists
+                            if let Ok(child_children) = children_query.get(child) {
+                                for &grandchild in child_children.iter() {
+                                    if let Ok(mut text) = text_query.get_mut(grandchild) {
+                                        text.0 = format!("{:.1}", pixel.x);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // No children yet, create initial grid
+                Self::create_kernel_grid(&mut commands, grid_entity, &kernel_data);
+            }
+        }
+    }
+
+    /// Helper function to create the kernel grid
+    fn create_kernel_grid(
+        commands: &mut Commands,
+        grid_entity: Entity,
+        kernel_data: &KernelDataResource,
+    ) {
+        commands.entity(grid_entity).with_children(|parent| {
+            for (index, pixel) in kernel_data.data.iter().enumerate() {
+                let color = Color::srgba(
+                    pixel.x.clamp(0.0, 1.0),
+                    pixel.y.clamp(0.0, 1.0), 
+                    pixel.z.clamp(0.0, 1.0),
+                    1.0,
+                );
+                
+                parent.spawn((
+                    Node {
+                        width: Val::Px(30.0),
+                        height: Val::Px(30.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(color),
+                    BorderColor(Color::WHITE),
+                )).with_children(|cell| {
+                    cell.spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            bottom: Val::Px(1.0),
+                            right: Val::Px(1.0),
+                            ..default()
+                        },
+                        Text::new(format!("{:.1}", pixel.x)),
+                    ));
+                });
+            }
+        });
     }
 }
 
