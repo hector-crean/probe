@@ -17,7 +17,7 @@ use bevy::{
 
 use crate::{
     camera_controller::{CameraControllerPlugin, ControlledCamera, SimpleOrbitCamera},
-    probe::{Probe, ProbePlugin, visualisation::ProbeVisualizationPlugin},
+    probe::{Probe, ProbePlugin},
 };
 
 pub struct AppPlugin;
@@ -28,7 +28,6 @@ impl Plugin for AppPlugin {
             DefaultPlugins,
             CameraControllerPlugin,
             ProbePlugin,
-            ProbeVisualizationPlugin,
         ))
         .add_systems(
             Startup,

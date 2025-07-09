@@ -1,48 +1,41 @@
+pub mod events;
+pub mod frustum;
+pub mod gizmo;
+pub mod interaction;
+pub mod monitor;
+pub mod state;
+pub mod utils;
 pub mod visualisation;
 
+use self::{
+    events::{ProbeClickEvent, ProbeHoverEvent},
+    state::ProbeState,
+    visualisation::ProbeVisualizationPlugin,
+};
 use bevy::{
-    app::{App, Plugin},
-    asset::{AssetServer, Assets, Handle, RenderAssetUsages, load_internal_asset, weak_handle},
-    core_pipeline::core_3d::{
-        Camera3d,
-        graph::{Core3d, Node3d},
-    },
-    ecs::{
+    prelude::*,
+    app::{App, Plugin}, asset::{load_internal_asset, weak_handle, AssetServer, Assets, Handle, RenderAssetUsages}, core_pipeline::core_3d::{
+        graph::{Core3d, Node3d}, Camera3d
+    }, ecs::{
         component::Component,
         entity::Entity,
-        event::EventWriter,
         query::{QueryState, With, Without},
-        schedule::IntoScheduleConfigs,
-        system::{Commands, Query, Res, ResMut, SystemParamItem, lifetimeless::Read},
+        system::{lifetimeless::Read, Commands, Query, Res, ResMut, SystemParamItem},
         world::{FromWorld, World},
-    },
-    log::info,
-    math::{UVec2, Vec2, Vec4},
-    prelude::{
-        Added, Camera, Children, Color, Image, PluginGroup, Resource, Startup, Transform, Trigger, Update,
-    },
-    ui::prelude::*,
-    render::{
-        Render, RenderApp, RenderSet,
+    }, log::info, math::{UVec2, Vec2, Vec4}, prelude::{Added, AppExtStates, Camera, Children, Color, Image, IntoScheduleConfigs, Resource, Startup, Transform, Trigger, Update}, render::{
         camera::{PerspectiveProjection, Projection, RenderTarget},
         extract_component::{ExtractComponent, ExtractComponentPlugin},
-        gpu_readback::{GpuReadbackPlugin, Readback, ReadbackComplete},
-        graph::CameraDriverLabel,
-        render_asset::{RenderAsset, RenderAssets},
-        render_graph::{self, RenderGraph, RenderGraphApp, RenderLabel},
+        gpu_readback::{Readback, ReadbackComplete},
+        render_asset::RenderAssets,
+        render_graph::{self, RenderGraphApp, RenderLabel},
         render_resource::{
-            AsBindGroup, BindGroup, BindGroupEntries, BindGroupEntry, BindGroupLayout, Buffer,
+            AsBindGroup, BindGroup, BindGroupLayout,
             BufferUsages, CachedComputePipelineId, ComputePassDescriptor,
-            ComputePipelineDescriptor, Extent3d, PipelineCache, Shader, ShaderRef, ShaderSource,
-            ShaderStages, ShaderType, StorageBuffer, StorageTextureAccess, TextureDimension,
-            TextureFormat, TextureUsages, TextureViewDimension, UniformBuffer,
-        },
-        renderer::{RenderContext, RenderDevice},
-        storage::{GpuShaderStorageBuffer, ShaderStorageBuffer},
-        texture::{FallbackImage, GpuImage},
-        view::RenderLayers,
-    },
-    utils::default,
+            ComputePipelineDescriptor, Extent3d, PipelineCache, Shader,
+            ShaderType, TextureDimension,
+            TextureFormat, TextureUsages,
+        }, renderer::{RenderContext, RenderDevice}, storage::{GpuShaderStorageBuffer, ShaderStorageBuffer}, texture::{FallbackImage, GpuImage}, Render, RenderApp, RenderSet
+    }, ui::prelude::*, utils::default
 };
 
 const PROBE_KERNEL_SMALL_SHADER_HANDLE: Handle<Shader> = weak_handle!("5eb828ff-9ee5-4c25-a12a-886e2aeb096d");
@@ -64,13 +57,15 @@ pub struct KernelVisualizationUI;
 #[derive(Component)]
 pub struct KernelGrid;
 
+/// Component to mark a probe as actively being used
+#[derive(Component)]
+pub struct ActiveProbe;
 
 /// This plugin provides the components and systems for GPU-based render target probing.
 pub struct ProbePlugin;
 
 impl Plugin for ProbePlugin {
     fn build(&self, app: &mut App) {
-
         load_internal_asset!(
             app,
             PROBE_KERNEL_SMALL_SHADER_HANDLE,
@@ -92,14 +87,24 @@ impl Plugin for ProbePlugin {
             Shader::from_wesl
         );
 
-
         app.add_plugins((
+            ProbeVisualizationPlugin,
             ExtractComponentPlugin::<ProbeSettings>::default(),
             ExtractComponentPlugin::<ProbeBindGroup>::default(),
         ))
+        .init_state::<ProbeState>()
+        .add_event::<ProbeHoverEvent>()
+        .add_event::<ProbeClickEvent>()
         .init_resource::<KernelDataResource>()
         .add_systems(Startup, Self::setup_kernel_visualization_ui)
-        .add_systems(Update, (Self::setup_probe_on_camera, Self::update_kernel_visualization_ui));
+        .add_systems(
+            Update,
+            (
+                Self::setup_probe_on_camera,
+                Self::update_kernel_visualization_ui,
+                Self::manage_active_probes,
+            ),
+        );
     }
 
     fn finish(&self, app: &mut App) {
@@ -109,8 +114,7 @@ impl Plugin for ProbePlugin {
             .init_resource::<ProbePipeline>()
             .add_systems(
                 Render,
-                (Self::prepare_probe_bind_groups)
-                    .chain()
+                Self::prepare_probe_bind_groups
                     .in_set(RenderSet::PrepareBindGroups),
             )
             .add_render_graph_node::<ProbeNode>(Core3d, ProbeNodeLabel)
@@ -124,13 +128,16 @@ pub struct ProbeNodeLabel;
 /// The render graph node that executes the probe compute shader.
 struct ProbeNode {
     // We query for probes that are ready to be processed.
-    query: QueryState<(Read<PreparedProbe>, Read<ProbeSettings>)>,
+    query: QueryState<(Read<PreparedProbe>, Read<ProbeSettings>), With<ActiveProbe>>,
+    // Track whether we should be actively probing
+    should_probe: bool,
 }
 
 impl FromWorld for ProbeNode {
     fn from_world(world: &mut World) -> Self {
         Self {
-            query: world.query_filtered::<(Read<PreparedProbe>, Read<ProbeSettings>), ()>(),
+            query: world.query_filtered::<(Read<PreparedProbe>, Read<ProbeSettings>), With<ActiveProbe>>(),
+            should_probe: false,
         }
     }
 }
@@ -169,7 +176,7 @@ pub struct ProbeBindGroup {
     #[uniform(0)]
     settings: ProbeSettings,
     #[texture(1, visibility(compute))]
-    source_texture: Handle<Image>,
+    pub source_texture: Handle<Image>,
     #[storage(2, visibility(compute))]
     output_buffer: Handle<ShaderStorageBuffer>,
 }
@@ -190,9 +197,7 @@ impl FromWorld for ProbePipeline {
         let layout = ProbeBindGroup::bind_group_layout(render_device);
 
         let pipeline_cache = world.resource::<PipelineCache>();
-        let asset_server = world.resource::<AssetServer>();
-
-      
+        let _asset_server = world.resource::<AssetServer>();
 
         let small_pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
             zero_initialize_workgroup_memory: false,
@@ -234,6 +239,31 @@ impl FromWorld for ProbePipeline {
 }
 
 impl ProbePlugin {
+    /// Manages the ActiveProbe component based on the current ProbeState
+    fn manage_active_probes(
+        mut commands: Commands,
+        current_state: Res<State<ProbeState>>,
+        probe_query: Query<Entity, With<Probe>>,
+        active_probe_query: Query<Entity, (With<Probe>, With<ActiveProbe>)>,
+    ) {
+        match current_state.get() {
+            ProbeState::Probing => {
+                // Add ActiveProbe component to all probes that don't have it
+                for entity in probe_query.iter() {
+                    if !active_probe_query.contains(entity) {
+                        commands.entity(entity).insert(ActiveProbe);
+                    }
+                }
+            }
+            ProbeState::Idle => {
+                // Remove ActiveProbe component from all probes that have it
+                for entity in active_probe_query.iter() {
+                    commands.entity(entity).remove::<ActiveProbe>();
+                }
+            }
+        }
+    }
+
     /// Attaches the necessary probe components to any camera that has the `Probe` marker component.
     fn setup_probe_on_camera(
         mut commands: Commands,
@@ -316,7 +346,7 @@ impl ProbePlugin {
                     kernel_data.data = kernel;
                     kernel_data.kernel_size = kernel_size; // Use the actual kernel size
                     
-                    // info!("Buffer {:?}", kernel_data.data);
+                    info!("Buffer {:?}", kernel_data.data);
                 });
         }
     }
@@ -401,13 +431,13 @@ impl ProbePlugin {
             if let Ok(children) = children_query.get(grid_entity) {
                 if children.len() != kernel_data.data.len() {
                     // Grid size changed, need to rebuild
-                    for &child in children.iter() {
-                        commands.entity(child).despawn_recursive();
+                    for child in children.iter() {
+                        commands.entity(child).despawn();
                     }
                     Self::create_kernel_grid(&mut commands, grid_entity, &kernel_data);
                 } else {
                     // Update existing squares
-                    for (index, &child) in children.iter().enumerate() {
+                    for (index, child) in children.iter().enumerate() {
                         if index < kernel_data.data.len() {
                             let pixel = &kernel_data.data[index];
                             let color = Color::srgba(
@@ -423,7 +453,7 @@ impl ProbePlugin {
                             
                             // Update text in grandchildren if exists
                             if let Ok(child_children) = children_query.get(child) {
-                                for &grandchild in child_children.iter() {
+                                for grandchild in child_children.iter() {
                                     if let Ok(mut text) = text_query.get_mut(grandchild) {
                                         text.0 = format!("{:.1}", pixel.x);
                                     }
@@ -446,7 +476,7 @@ impl ProbePlugin {
         kernel_data: &KernelDataResource,
     ) {
         commands.entity(grid_entity).with_children(|parent| {
-            for (index, pixel) in kernel_data.data.iter().enumerate() {
+            for (_index, pixel) in kernel_data.data.iter().enumerate() {
                 let color = Color::srgba(
                     pixel.x.clamp(0.0, 1.0),
                     pixel.y.clamp(0.0, 1.0), 
