@@ -31,14 +31,14 @@ use crate::{
 #[derive(Default, Reflect, GizmoConfigGroup)]
 pub struct MainCameraGizmos;
 
-pub struct FrustumNearPlanePlugin;
+pub struct FrustumNearPlaneInteractionPlugin;
 
 fn setup_main_camera_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
     let (config, _) = config_store.config_mut::<MainCameraGizmos>();
     config.render_layers = RenderLayers::layer(0);
 }
 
-impl Plugin for FrustumNearPlanePlugin {
+impl Plugin for FrustumNearPlaneInteractionPlugin {
     fn build(&self, app: &mut App) {
         app.init_gizmo_group::<MainCameraGizmos>()
             .add_systems(Startup, setup_main_camera_gizmos)

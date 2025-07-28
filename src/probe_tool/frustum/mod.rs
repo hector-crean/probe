@@ -1,5 +1,5 @@
 pub mod mesh_builder;
-pub mod near_plane;
+pub mod near_plane_interaction;
 use bevy::{
     pbr::{NotShadowCaster, NotShadowReceiver},
     prelude::*,
@@ -39,7 +39,7 @@ pub struct FrustumPlugin;
 
 impl Plugin for FrustumPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(near_plane::FrustumNearPlanePlugin);
+        app.add_plugins(near_plane_interaction::FrustumNearPlaneInteractionPlugin);
         app.add_systems(Update, (draw_frustum, update_probe_visualizations));
     }
 }
