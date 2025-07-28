@@ -1,13 +1,13 @@
+
 use bevy::{
-    pbr::{NotShadowCaster, NotShadowReceiver},
     prelude::*,
     render::render_asset::RenderAssetUsages,
 };
 
-use crate::probe::KernelBindGroup;
 
-/// Component that represents a visual frustum for a probe camera
-#[derive(Component)]
+
+
+
 pub struct ProbeFrustum {
     pub projection: PerspectiveProjection,
 }
@@ -17,6 +17,10 @@ impl ProbeFrustum {
         Self { projection }
     }
 }
+
+
+
+
 
 /// Mesh builder for creating frustum wireframes
 pub struct ProbeFrustumMeshBuilder {
@@ -134,37 +138,3 @@ impl Meshable for ProbeFrustum {
 
 
 
-
-/// System to create frustum entities for newly added probes
-pub fn spawn_frustum_for_probe(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    probe_query: Query<(Entity, &Projection), Added<KernelBindGroup>>,
-) {
-    for (probe_entity, projection) in probe_query.iter() {
-        let perspective = match projection {
-            Projection::Perspective(perspective) => perspective,
-            _ => continue,
-        };
-
-        let frustum_mesh_builder = ProbeFrustumMeshBuilder::from_perspective_projection(perspective);
-        let mesh = meshes.add(frustum_mesh_builder.build());
-
-        let frustum_entity = commands
-            .spawn((
-                ProbeFrustum::new(perspective.clone()),
-                Mesh3d::from(mesh),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgba(1.0, 1.0, 0.0, 1.0), // Yellow wireframe
-                    unlit: true,
-                    ..default()
-                })),
-                NotShadowCaster,
-                NotShadowReceiver,
-            ))
-            .id();
-
-        commands.entity(probe_entity).add_child(frustum_entity);
-    }
-} 

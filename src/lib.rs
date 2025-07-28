@@ -1,5 +1,5 @@
 pub mod camera_controller;
-pub mod probe;
+pub mod probe_tool;
 
 use bevy::{
     prelude::*,
@@ -13,8 +13,8 @@ use crate::{
         orbit_camera_controller::{OrbitCameraController, OrbitCameraControllerPlugin},
         probe_camera_controller::ProbeCameraControllerPlugin,
     },
-    probe::{near_plane::NearPlanePlugin, ProbeCamera, ProbePlugin, events::ProbeCameraEvent},
-};
+        probe_tool::{events::ProbeCameraEvent, ProbeToolPlugin},
+    };
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 
 pub struct AppPlugin;
@@ -25,8 +25,7 @@ impl Plugin for AppPlugin {
             DefaultPlugins,
             OrbitCameraControllerPlugin,
             ProbeCameraControllerPlugin,
-            ProbePlugin,
-            NearPlanePlugin,
+            ProbeToolPlugin,
         ))
         .add_plugins(EguiPlugin {
             enable_multipass_for_primary_context: true,

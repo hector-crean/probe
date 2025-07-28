@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::probe::ProbeCamera;
+use crate::probe_tool::ProbeCamera;
 
 
 pub struct ProbeCameraControllerPlugin;

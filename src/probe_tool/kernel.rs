@@ -1,8 +1,18 @@
 use bevy::prelude::*;
 
-pub struct KernelPlugin;
+pub struct KernelHUDPlugin;
 
-impl KernelPlugin {
+impl Plugin for KernelHUDPlugin {
+    fn build(&self, app: &mut bevy::app::App) {
+        app.init_resource::<KernelDataResource>()
+            .add_systems(Startup, Self::setup_kernel_visualization_ui)
+            .add_systems(Update, (Self::update_kernel_visualization_ui,));
+    }
+}
+
+
+
+impl KernelHUDPlugin {
     /// Sets up the kernel visualization UI
     fn setup_kernel_visualization_ui(mut commands: Commands) {
         // Create a UI panel to show kernel data as colored grid
@@ -139,13 +149,7 @@ impl KernelPlugin {
     }
 }
 
-impl Plugin for KernelPlugin {
-    fn build(&self, app: &mut bevy::app::App) {
-        app.init_resource::<KernelDataResource>()
-            .add_systems(Startup, Self::setup_kernel_visualization_ui)
-            .add_systems(Update, (Self::update_kernel_visualization_ui,));
-    }
-}
+
 
 /// Resource to store the current kernel data for UI visualization
 #[derive(Resource, Default)]

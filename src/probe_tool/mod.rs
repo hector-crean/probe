@@ -1,21 +1,11 @@
 pub mod events;
 pub mod frustum;
-pub mod gizmo;
-pub mod interaction;
 pub mod kernel;
-pub mod monitor;
-pub mod near_plane;
-pub mod state;
-pub mod utils;
-pub mod visualisation;
 
-use crate::probe::kernel::{KernelDataResource, KernelPlugin};
-use crate::probe::near_plane::NearPlaneIntersection;
+use crate::probe_tool::{frustum::{near_plane::FrustumNearPlaneIntersection, FrustumPlugin}, kernel::{KernelDataResource, KernelHUDPlugin}};
 
 use self::{
-    events::{ProbeCameraEvent, ProbeClickEvent, ProbeHoverEvent},
-    state::ProbeState,
-    visualisation::ProbeVisualizationPlugin,
+    events::{ProbeCameraEvent},
 };
 use bevy::math::FloatOrd;
 use bevy::render::camera::ImageRenderTarget;
@@ -60,6 +50,23 @@ use bevy::{
     utils::default,
 };
 
+
+
+
+
+#[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
+// #[source(ToolState = ToolState::Probe)]
+pub enum ProbeToolState {
+    #[default]
+    Idle,
+    Probing,
+} 
+
+
+
+
+
+
 const PROBE_KERNEL_SMALL_SHADER_HANDLE: Handle<Shader> =
     weak_handle!("5eb828ff-9ee5-4c25-a12a-886e2aeb096d");
 const PROBE_KERNEL_MEDIUM_SHADER_HANDLE: Handle<Shader> =
@@ -70,9 +77,9 @@ const PROBE_KERNEL_LARGE_SHADER_HANDLE: Handle<Shader> =
 
 
 /// This plugin provides the components and systems for GPU-based render target probing.
-pub struct ProbePlugin;
+pub struct ProbeToolPlugin;
 
-impl Plugin for ProbePlugin {
+impl Plugin for ProbeToolPlugin {
     fn build(&self, app: &mut App) {
         load_internal_asset!(
             app,
@@ -96,15 +103,18 @@ impl Plugin for ProbePlugin {
         );
 
         app.add_plugins((
-            ProbeVisualizationPlugin,
             ExtractComponentPlugin::<KernelSettings>::default(),
             ExtractComponentPlugin::<KernelBindGroup>::default(),
-            KernelPlugin,
+            KernelHUDPlugin,
+            FrustumPlugin
         ))
-        .add_event::<ProbeHoverEvent>()
-        .add_event::<ProbeClickEvent>()
         .add_event::<ProbeCameraEvent>()
-        .init_state::<ProbeState>()
+        .init_state::<ProbeToolState>()
+        .add_systems(
+            Update,
+            Self::handle_state_transition
+                .run_if(on_event::<StateTransitionEvent<ProbeToolState>>),
+        )
         .add_systems(Update, (Self::handle_event, Self::sync_kernel_settings));
     }
 
@@ -121,6 +131,38 @@ impl Plugin for ProbePlugin {
             .add_render_graph_edge(Core3d, Node3d::EndMainPass, ProbeNodeLabel);
     }
 }
+
+
+
+
+impl ProbeToolPlugin {
+    fn handle_state_transition(
+        mut state_reader: EventReader<StateTransitionEvent<ProbeToolState>>,
+    ) {
+        for event in state_reader.read() {
+            info!("ProbeToolPlugin state changed from {:?} to {:?}", event.exited, event.entered);
+        }
+    } 
+    pub fn toggle_probing_state(
+        mut next_state: ResMut<NextState<ProbeToolState>>,
+        current_state: Res<State<ProbeToolState>>,
+        keyboard_input: Res<ButtonInput<KeyCode>>,
+    ) {
+        if keyboard_input.just_pressed(KeyCode::KeyP) {
+            let new_state = match current_state.get() {
+                ProbeToolState::Idle => ProbeToolState::Probing,
+                ProbeToolState::Probing => ProbeToolState::Idle,
+            };
+            next_state.set(new_state);
+        }
+    } 
+}
+
+
+
+
+
+
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
 pub struct ProbeNodeLabel;
@@ -181,7 +223,7 @@ pub struct ProbeCameraQuery {
     pub projection: &'static mut Projection,
     pub kernel_settings: &'static mut KernelSettings,
     pub kernel_bind_group: &'static mut KernelBindGroup,
-    pub near_plane_intersection: &'static mut NearPlaneIntersection,
+    pub near_plane_intersection: &'static mut FrustumNearPlaneIntersection,
     pub readback: &'static mut Readback,
 }
 
@@ -267,7 +309,7 @@ impl FromWorld for ProbePipeline {
     }
 }
 
-impl ProbePlugin {
+impl ProbeToolPlugin {
     /// Creates all the necessary components for a probe camera.
     /// Returns a tuple of (components_bundle, image_handle, ssbo_handle, observer_closure)
     fn create_probe_camera_components(
@@ -284,7 +326,7 @@ impl ProbePlugin {
             Camera3d,
             Projection,
             KernelBindGroup,
-            NearPlaneIntersection,
+            FrustumNearPlaneIntersection,
             Readback,
             RenderLayers,
         ),
@@ -351,7 +393,7 @@ impl ProbePlugin {
                 source_texture: image_handle.clone(),
                 output_buffer: ssbo_handle.clone(),
             },
-            NearPlaneIntersection::default(),
+            FrustumNearPlaneIntersection::default(),
             Readback::buffer(ssbo_handle.clone()),
             RenderLayers::layer(1), // Probe camera only sees layer 1 (excludes gizmos)
         );
