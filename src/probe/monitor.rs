@@ -3,7 +3,7 @@ use bevy::{
     prelude::*,
 };
 
-use crate::probe::ProbeBindGroup;
+use crate::probe::KernelBindGroup;
 
 /// Component that represents a monitor display for a probe camera
 #[derive(Component)]
@@ -26,7 +26,7 @@ pub fn spawn_monitor_for_probe(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    probe_query: Query<(Entity, &ProbeBindGroup), Added<ProbeBindGroup>>,
+    probe_query: Query<(Entity, &KernelBindGroup), Added<KernelBindGroup>>,
 ) {
     for (probe_entity, bind_group) in probe_query.iter() {
         let monitor_entity = commands

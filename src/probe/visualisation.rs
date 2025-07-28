@@ -9,7 +9,7 @@ use crate::probe::{
     interaction::{emit_monitor_interaction_events, toggle_probing_state, update_probe_settings_on_click, update_probe_settings_on_hover},
     monitor::{spawn_monitor_for_probe, update_monitor_highlight, ProbeMonitor},
     state::ProbeState,
-    Probe,
+    ProbeCamera,
 };
 
 pub struct ProbeVisualizationPlugin;
@@ -43,7 +43,7 @@ fn update_probe_visualizations(
     mut materials: ResMut<Assets<StandardMaterial>>,
     probe_query: Query<
         (&Projection, &Camera, &Children),
-        (With<Probe>, Or<(Changed<Projection>, Changed<Camera>)>),
+        (With<ProbeCamera>, Or<(Changed<Projection>, Changed<Camera>)>),
     >,
     mut visual_query: ParamSet<(
         Query<

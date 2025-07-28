@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 bevy = { version = "0.16.1", features = ["shader_format_wesl"] }
+bevy-inspector-egui = "0.31.0"
 wesl = { version = "0.1.2" }
 
 

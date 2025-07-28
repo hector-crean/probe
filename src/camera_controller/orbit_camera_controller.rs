@@ -1,11 +1,9 @@
 use bevy::{input::mouse::MouseMotion, prelude::*};
 
-#[derive(Component)]
-pub struct ControlledCamera;
 
-pub struct CameraControllerPlugin;
+pub struct OrbitCameraControllerPlugin;
 
-impl Plugin for CameraControllerPlugin {
+impl Plugin for OrbitCameraControllerPlugin {
     fn build(&self, app: &mut App) {
         app
             .add_systems(Update, Self::simple_orbit_camera_system);
@@ -14,7 +12,7 @@ impl Plugin for CameraControllerPlugin {
 
 /// Simple orbit camera component that works with direct mouse input
 #[derive(Component)]
-pub struct SimpleOrbitCamera {
+pub struct OrbitCameraController {
     pub target: Vec3,
     pub distance: f32,
     pub yaw: f32,   // rotation around Y axis
@@ -22,7 +20,7 @@ pub struct SimpleOrbitCamera {
     pub sensitivity: f32,
 }
 
-impl Default for SimpleOrbitCamera {
+impl Default for OrbitCameraController {
     fn default() -> Self {
         Self {
             target: Vec3::ZERO,
@@ -34,14 +32,14 @@ impl Default for SimpleOrbitCamera {
     }
 }
 
-impl CameraControllerPlugin {
+impl OrbitCameraControllerPlugin {
    
     /// Simple orbit camera system that uses direct mouse input
     pub fn simple_orbit_camera_system(
         mut mouse_motion_events: EventReader<MouseMotion>,
         mut mouse_wheel_events: EventReader<bevy::input::mouse::MouseWheel>,
         mouse_button_input: Res<ButtonInput<MouseButton>>,
-        mut query: Query<(&mut SimpleOrbitCamera, &mut Transform)>,
+        mut query: Query<(&mut OrbitCameraController, &mut Transform)>,
     ) {
         for (mut orbit_camera, mut transform) in query.iter_mut() {
             // Handle mouse motion for orbiting

@@ -9,14 +9,14 @@ use crate::probe::{
     monitor::ProbeMonitor,
     state::ProbeState,
     utils::{intersect_ray_with_plane, world_to_texture_coords},
-    ProbeSettings,
+    KernelSettings,
 };
 
 /// System to detect mouse interactions with probe monitors and emit events
 pub fn emit_monitor_interaction_events(
     monitor_query: Query<(&ProbeMonitor, &GlobalTransform)>,
     camera_query: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
-    probe_camera_query: Query<&Projection, With<crate::probe::Probe>>,
+    probe_camera_query: Query<&Projection, With<crate::probe::ProbeCamera>>,
     window_query: Query<&Window, With<PrimaryWindow>>,
     mouse_button_input: Res<ButtonInput<MouseButton>>,
     mut hover_events: EventWriter<ProbeHoverEvent>,
@@ -81,7 +81,7 @@ pub fn emit_monitor_interaction_events(
 
 /// System to update probe settings when a monitor is hovered (temporary update)
 pub fn update_probe_settings_on_hover(
-    mut probe_query: Query<&mut ProbeSettings>,
+    mut probe_query: Query<&mut KernelSettings>,
     mut hover_events: EventReader<ProbeHoverEvent>,
 ) {
     for event in hover_events.read() {
@@ -94,7 +94,7 @@ pub fn update_probe_settings_on_hover(
 
 /// System to update probe settings when a monitor is clicked (permanent update)
 pub fn update_probe_settings_on_click(
-    mut probe_query: Query<&mut ProbeSettings>,
+    mut probe_query: Query<&mut KernelSettings>,
     mut click_events: EventReader<ProbeClickEvent>,
 ) {
     for event in click_events.read() {

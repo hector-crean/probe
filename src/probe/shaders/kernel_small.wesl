@@ -1,9 +1,9 @@
 // ===== SHARED TYPE DEFINITIONS =====
 
-// This struct must match the `ProbeSettings` struct in Rust.
+// This struct must match the `KernelSettings` struct in Rust.
 // Bevy's `ShaderType` derive macro handles padding and alignment (std140),
 // so we just need to match the fields in order.
-struct ProbeSettings {
+struct KernelSettings {
     // Size of the kernel to read, in pixels.
     kernel_size: vec2<f32>,
     // Normalized coordinates [0, 1] of the probe's center.
@@ -12,8 +12,8 @@ struct ProbeSettings {
 
 // ===== SHARED BINDINGS =====
 
-// These bindings must match the `ProbeBindGroup` struct in Rust.
-@group(0) @binding(0) var<uniform> settings: ProbeSettings;
+// These bindings must match the `KernelBindGroup` struct in Rust.
+@group(0) @binding(0) var<uniform> settings: KernelSettings;
 @group(0) @binding(1) var source_texture: texture_2d<f32>;
 @group(0) @binding(2) var<storage, read_write> output_buffer: array<vec4<f32>>;
 
@@ -25,7 +25,7 @@ fn is_within_kernel_bounds(id: vec3<u32>, kernel_dims: vec2<u32>) -> bool {
 }
 
 // Calculates the texture coordinates for sampling
-fn calculate_sample_coords(id: vec3<u32>, settings: ProbeSettings, texture_dims: vec2<f32>) -> vec2<f32> {
+fn calculate_sample_coords(id: vec3<u32>, settings: KernelSettings, texture_dims: vec2<f32>) -> vec2<f32> {
     // Calculate the pixel coordinate of the probe's center.
     let center_pixel = texture_dims * settings.center_coords;
 

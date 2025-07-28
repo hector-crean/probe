@@ -4,7 +4,7 @@ use bevy::{
     render::render_asset::RenderAssetUsages,
 };
 
-use crate::probe::ProbeBindGroup;
+use crate::probe::KernelBindGroup;
 
 /// Component that represents a visual frustum for a probe camera
 #[derive(Component)]
@@ -131,12 +131,16 @@ impl Meshable for ProbeFrustum {
     }
 }
 
+
+
+
+
 /// System to create frustum entities for newly added probes
 pub fn spawn_frustum_for_probe(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    probe_query: Query<(Entity, &Projection), Added<ProbeBindGroup>>,
+    probe_query: Query<(Entity, &Projection), Added<KernelBindGroup>>,
 ) {
     for (probe_entity, projection) in probe_query.iter() {
         let perspective = match projection {
