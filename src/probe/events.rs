@@ -1,5 +1,19 @@
 use bevy::prelude::*;
 
+
+
+#[derive(Event)]
+pub enum ProbeCameraEvent {
+    Add {
+        transform: Transform,
+        resolution: UVec2,
+    },
+    // Remove {
+    //     entity: Entity,
+    // }
+}
+
+
 /// Event fired when the cursor is hovering over a probe monitor.
 #[derive(Event)]
 pub struct ProbeHoverEvent {

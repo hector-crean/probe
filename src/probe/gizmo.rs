@@ -1,13 +1,13 @@
 use bevy::prelude::*;
 
 use crate::probe::{
-    events::ProbeHoverEvent, monitor::ProbeMonitor
+    events::ProbeHoverEvent, monitor::ProbeMonitor, near_plane::MainCameraGizmos
 };
 
 /// System to draw a crosshair gizmo at the intersection point
 pub fn draw_intersection_gizmo(
     mut hover_events: EventReader<ProbeHoverEvent>,
-    mut gizmos: Gizmos,
+    mut gizmos: Gizmos<MainCameraGizmos>,
     monitor_query: Query<(&ProbeMonitor, &GlobalTransform)>,
 ) {
     if let Some(event) = hover_events.read().last() {

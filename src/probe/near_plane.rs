@@ -21,33 +21,40 @@ use bevy::{
     prelude::*,
     render::{
         camera::Projection,
+        view::RenderLayers,
     },
+    gizmos::config::{GizmoConfigGroup, GizmoConfigStore},
 };
 
-use crate::{MainCamera, probe::ProbeCamera, camera_controller::probe_camera_controller::ProbeCameraController};
+use crate::{camera_controller::probe_camera_controller::ProbeCameraController, probe::{KernelSettings, ProbeCamera}, MainCamera};
 
-
-
+#[derive(Default, Reflect, GizmoConfigGroup)]
+pub struct MainCameraGizmos {}
 
 pub struct NearPlanePlugin;
+
+fn setup_main_camera_gizmos(
+    mut config_store: ResMut<GizmoConfigStore>,
+) {
+    let (config, _) = config_store.config_mut::<MainCameraGizmos>();
+    config.render_layers = RenderLayers::layer(0);
+}
 
 impl Plugin for NearPlanePlugin {
     fn build(&self, app: &mut App) {
        app 
+       .init_gizmo_group::<MainCameraGizmos>()
        .add_systems(
             Update,
             (
                 frustrum_camera_controller,
                 // visualize_frustum,
-                calculate_near_plane_intersection,
+                update_near_plane_intersection,
+                setup_main_camera_gizmos,
             ),
         );
     }
 }
-
-
-
-
 
 /// Component to store the near plane intersection point
 #[derive(Component, Default)]
@@ -102,11 +109,11 @@ fn frustrum_camera_controller(
 
 
 
-fn calculate_near_plane_intersection(
-    mut gizmos: Gizmos,
+fn update_near_plane_intersection(
+    mut gizmos: Gizmos<MainCameraGizmos>,
     window: Single<&Window>,
     mut frustrum_camera_query: Query<
-        (&Camera, &GlobalTransform, &mut NearPlaneIntersection, &Projection),
+        (&Camera, &GlobalTransform, &mut NearPlaneIntersection, &Projection, &mut KernelSettings),
         (With<ProbeCamera>, Without<MainCamera>)
     >,
     main_camera_query: Query<(&mut Camera, &GlobalTransform, &Projection), (With<MainCamera>, Without<ProbeCamera>)>,
@@ -116,7 +123,7 @@ fn calculate_near_plane_intersection(
         return;
     };
 
-    let Ok((frustrum_camera, frustrum_camera_transform, mut frustrum_intersection, frustrum_projection)) = frustrum_camera_query.single_mut() else {
+    let Ok((frustrum_camera, frustrum_camera_transform, mut frustrum_intersection, frustrum_projection, mut kernel_settings)) = frustrum_camera_query.single_mut() else {
         return;
     };
 
@@ -233,6 +240,9 @@ fn calculate_near_plane_intersection(
                     return;
                 }
             };
+
+            kernel_settings.center_coords = Vec2::new(frutum_viewport_position.x / frustrum_camera.logical_viewport_size().unwrap_or(Vec2::new(800.0, 600.0)).x, frutum_viewport_position.y / frustrum_camera.logical_viewport_size().unwrap_or(Vec2::new(800.0, 600.0)).y);
+
             let Ok(frustum_camera_ray) = frustrum_camera.viewport_to_world(frustrum_camera_transform, frutum_viewport_position) else {
                 frustrum_intersection.point = None;
                 frustrum_intersection.ray = None;
@@ -243,21 +253,7 @@ fn calculate_near_plane_intersection(
 
         }
         
-        // Optional: Draw the near plane as a rectangle for reference
-        let near_plane_size = 2.0; // Adjust based on your needs
-        let camera_right_scaled = frustrum_camera_transform.right() * near_plane_size;
-        let camera_up_scaled = frustrum_camera_transform.up() * near_plane_size;
-        
-        let near_corners = [
-            near_plane_center - camera_right_scaled - camera_up_scaled,
-            near_plane_center + camera_right_scaled - camera_up_scaled,
-            near_plane_center + camera_right_scaled + camera_up_scaled,
-            near_plane_center - camera_right_scaled + camera_up_scaled,
-        ];
-        
-        gizmos.linestrip([
-            near_corners[0], near_corners[1], near_corners[2], near_corners[3], near_corners[0]
-        ], Color::srgba(1.0, 1.0, 0.0, 0.3)); // Semi-transparent yellow
+      
     } else {
         frustrum_intersection.point = None;
         frustrum_intersection.ray = None;

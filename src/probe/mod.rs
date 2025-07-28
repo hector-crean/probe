@@ -13,7 +13,7 @@ use crate::probe::kernel::{KernelDataResource, KernelPlugin};
 use crate::probe::near_plane::NearPlaneIntersection;
 
 use self::{
-    events::{ProbeClickEvent, ProbeHoverEvent},
+    events::{ProbeCameraEvent, ProbeClickEvent, ProbeHoverEvent},
     state::ProbeState,
     visualisation::ProbeVisualizationPlugin,
 };
@@ -55,6 +55,7 @@ use bevy::{
         renderer::{RenderContext, RenderDevice},
         storage::{GpuShaderStorageBuffer, ShaderStorageBuffer},
         texture::{FallbackImage, GpuImage},
+        view::RenderLayers,
     },
     utils::default,
 };
@@ -66,16 +67,7 @@ const PROBE_KERNEL_MEDIUM_SHADER_HANDLE: Handle<Shader> =
 const PROBE_KERNEL_LARGE_SHADER_HANDLE: Handle<Shader> =
     weak_handle!("5db827ff-9ee5-4c25-a12a-886e2aeb096d");
 
-#[derive(Event)]
-pub enum ProbeCameraEvent {
-    Add {
-        transform: Transform,
-        resolution: UVec2,
-    },
-    // Remove {
-    //     entity: Entity,
-    // }
-}
+
 
 /// This plugin provides the components and systems for GPU-based render target probing.
 pub struct ProbePlugin;
@@ -113,7 +105,7 @@ impl Plugin for ProbePlugin {
         .add_event::<ProbeClickEvent>()
         .add_event::<ProbeCameraEvent>()
         .init_state::<ProbeState>()
-        .add_systems(Update, (Self::handle_event,));
+        .add_systems(Update, (Self::handle_event, Self::sync_kernel_settings));
     }
 
     fn finish(&self, app: &mut App) {
@@ -193,7 +185,7 @@ pub struct ProbeCameraQuery {
     pub readback: &'static mut Readback,
 }
 
-#[derive(Component, Clone, ExtractComponent, ShaderType, Default)]
+#[derive(Component, Clone, PartialEq, ExtractComponent, ShaderType, Default)]
 pub struct KernelSettings {
     /// Size of the kernel in pixels.
     pub kernel_size: Vec2,
@@ -294,6 +286,7 @@ impl ProbePlugin {
             KernelBindGroup,
             NearPlaneIntersection,
             Readback,
+            RenderLayers,
         ),
         Handle<Image>,
         Handle<ShaderStorageBuffer>,
@@ -360,6 +353,7 @@ impl ProbePlugin {
             },
             NearPlaneIntersection::default(),
             Readback::buffer(ssbo_handle.clone()),
+            RenderLayers::layer(1), // Probe camera only sees layer 1 (excludes gizmos)
         );
 
         (components, image_handle, ssbo_handle, kernel_size)
@@ -463,6 +457,19 @@ impl ProbePlugin {
             commands
                 .entity(entity)
                 .insert(PreparedKernel(bind_group.bind_group));
+        }
+    }
+
+    /// Syncs changes from the `KernelSettings` component to the `KernelBindGroup`'s `settings` field.
+    fn sync_kernel_settings(
+        mut query: Query<(&KernelSettings, &mut KernelBindGroup), Changed<KernelSettings>>,
+    ) {
+        for (settings, mut bind_group) in query.iter_mut() {
+            if bind_group.settings.center_coords != settings.center_coords || 
+               bind_group.settings.kernel_size != settings.kernel_size {
+                bind_group.settings = settings.clone();
+                info!("Updated KernelBindGroup settings: center_coords={:?}", settings.center_coords);
+            }
         }
     }
 }

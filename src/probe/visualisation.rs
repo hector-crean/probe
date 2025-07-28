@@ -6,7 +6,7 @@ use bevy::{
 use crate::probe::{
     frustum::{spawn_frustum_for_probe, ProbeFrustum, ProbeFrustumMeshBuilder},
     gizmo::draw_intersection_gizmo,
-    interaction::{emit_monitor_interaction_events, toggle_probing_state, update_probe_settings_on_click, update_probe_settings_on_hover},
+    interaction::{ toggle_probing_state},
     monitor::{spawn_monitor_for_probe, update_monitor_highlight, ProbeMonitor},
     state::ProbeState,
     ProbeCamera,
@@ -23,9 +23,7 @@ impl Plugin for ProbeVisualizationPlugin {
                 spawn_monitor_for_probe,
                 spawn_frustum_for_probe,
                 // Interaction systems
-                emit_monitor_interaction_events.run_if(in_state(ProbeState::Probing)),
-                update_probe_settings_on_hover.run_if(in_state(ProbeState::Probing)),
-                update_probe_settings_on_click,
+                // emit_monitor_interaction_events.run_if(in_state(ProbeState::Probing)),
                 toggle_probing_state,
                 // Visual feedback systems
                 update_monitor_highlight,

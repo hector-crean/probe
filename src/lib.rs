@@ -13,7 +13,7 @@ use crate::{
         orbit_camera_controller::{OrbitCameraController, OrbitCameraControllerPlugin},
         probe_camera_controller::ProbeCameraControllerPlugin,
     },
-    probe::{near_plane::NearPlanePlugin, ProbeCamera, ProbeCameraEvent, ProbePlugin},
+    probe::{near_plane::NearPlanePlugin, ProbeCamera, ProbePlugin, events::ProbeCameraEvent},
 };
 use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 
@@ -63,6 +63,7 @@ pub fn setup_main_camera(mut commands: Commands) {
         Camera3d::default(),
         Transform::from_translation(Vec3::new(0.0, 0.0, 25.0)).looking_at(Vec3::ZERO, Vec3::Y),
         MainCamera,
+        RenderLayers::layer(0), // Main camera only sees layer 0
     ));
 }
 
@@ -112,10 +113,19 @@ fn setup_cubes(
 ) {
     for y in -5..5 {
         for z in -5..5 {
+            // Generate distinct colors based on position
+            let hue: f32 = ((y + 5) * 10 + (z + 5)) as f32 * 36.0; // Spread hues across spectrum
+            let saturation: f32 = 0.8 + ((y + z) as f32 * 0.02); // Vary saturation slightly
+            let lightness: f32 = 0.5 + ((y * z) as f32 * 0.03); // Vary lightness
+            
+            // Convert HSL to RGB for more predictable color distribution
+            let color = Color::hsl(hue % 360.0, saturation.clamp(0.0, 1.0), lightness.clamp(0.3, 0.8));
+            
             commands.spawn((
                 Mesh3d(meshes.add(Cuboid::new(0.5, 0.5, 0.5))),
-                MeshMaterial3d(materials.add(Color::srgb_u8(124, 144, 255))),
+                MeshMaterial3d(materials.add(color)),
                 Transform::from_xyz(0.0, y as f32, z as f32),
+                RenderLayers::layer(0).with(1), // Visible to both main camera (layer 0) and probe camera (layer 1)
             ));
         }
     }
