@@ -1,4 +1,4 @@
-use bevy::{input::mouse::MouseMotion, prelude::*};
+use bevy::prelude::*;
 
 use crate::probe::ProbeCamera;
 
