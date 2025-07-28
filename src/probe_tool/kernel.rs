@@ -114,7 +114,7 @@ impl KernelHUDPlugin {
         kernel_data: &KernelDataResource,
     ) {
         commands.entity(grid_entity).with_children(|parent| {
-            for (_index, pixel) in kernel_data.data.iter().enumerate() {
+            for pixel in kernel_data.data.iter() {
                 let color = Color::srgba(
                     pixel.x.clamp(0.0, 1.0),
                     pixel.y.clamp(0.0, 1.0),

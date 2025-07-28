@@ -3,7 +3,6 @@ pub mod near_plane_interaction;
 use bevy::{
     pbr::{NotShadowCaster, NotShadowReceiver},
     prelude::*,
-    render::render_asset::RenderAssetUsages,
 };
 
 use crate::probe_tool::{
@@ -21,19 +20,12 @@ pub struct NearPlaneMarker;
 
 /// Component that stores references to child entities for easy management
 #[derive(Component)]
+#[derive(Default)]
 pub struct ProbeVisualizationChildren {
     pub frustum_entity: Option<Entity>,
     pub near_plane_entity: Option<Entity>,
 }
 
-impl Default for ProbeVisualizationChildren {
-    fn default() -> Self {
-        Self {
-            frustum_entity: None,
-            near_plane_entity: None,
-        }
-    }
-}
 
 pub struct FrustumPlugin;
 

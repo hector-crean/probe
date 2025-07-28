@@ -1,49 +1,36 @@
-use crate::probe_tool::{
-    frustum::{near_plane_interaction::FrustumNearPlaneIntersection, FrustumPlugin},
-    kernel::{KernelDataResource, KernelHUDPlugin}, KernelSettings,
-};
+use crate::probe_tool::KernelSettings;
 
-use bevy::math::FloatOrd;
-use bevy::render::camera::ImageRenderTarget;
 use bevy::{
     app::{App, Plugin},
-    asset::{AssetServer, Assets, Handle, RenderAssetUsages, load_internal_asset, weak_handle},
-    core_pipeline::core_3d::{
-        Camera3d,
-        graph::{Core3d, Node3d},
-    },
+    asset::{AssetServer, Handle, load_internal_asset, weak_handle},
+    core_pipeline::core_3d::graph::{Core3d, Node3d},
     ecs::{
         component::Component,
         entity::Entity,
-        query::{QueryData, QueryState, Without},
-        system::{Commands, Query, Res, ResMut, SystemParamItem, lifetimeless::Read},
+        query::QueryState,
+        system::{Commands, Query, Res, SystemParamItem, lifetimeless::Read},
         world::{FromWorld, World},
     },
     log::info,
-    math::{UVec2, Vec2, Vec4},
     prelude::*,
     prelude::{
-        Added, AppExtStates, Camera, Image, IntoScheduleConfigs, Resource, Transform, Trigger,
+        Image, IntoScheduleConfigs, Resource,
         Update,
     },
     render::{
         Render, RenderApp, RenderSet,
-        camera::{PerspectiveProjection, Projection, RenderTarget},
         extract_component::{ExtractComponent, ExtractComponentPlugin},
-        gpu_readback::{Readback, ReadbackComplete},
         render_asset::RenderAssets,
         render_graph::{self, RenderGraphApp, RenderLabel},
         render_resource::{
-            AsBindGroup, BindGroup, BindGroupLayout, BufferUsages, CachedComputePipelineId,
-            ComputePassDescriptor, ComputePipelineDescriptor, Extent3d, PipelineCache, Shader,
-            ShaderType, TextureDimension, TextureFormat, TextureUsages,
+            AsBindGroup, BindGroup, BindGroupLayout, CachedComputePipelineId,
+            ComputePassDescriptor, ComputePipelineDescriptor, PipelineCache, Shader,
+            ShaderType,
         },
         renderer::{RenderContext, RenderDevice},
         storage::{GpuShaderStorageBuffer, ShaderStorageBuffer},
         texture::{FallbackImage, GpuImage},
-        view::RenderLayers,
     },
-    utils::default,
 };
 
 const PROBE_KERNEL_SMALL_SHADER_HANDLE: Handle<Shader> =
@@ -80,11 +67,9 @@ impl Plugin for ProbePipelinePlugin {
         );
 
         app.add_plugins((
-            ExtractComponentPlugin::<KernelSettings>::default(),
             ExtractComponentPlugin::<KernelBindGroup>::default(),
         ));
 
-        app.add_systems(Update, (Self::sync_kernel_settings));
     }
 
     fn finish(&self, app: &mut App) {
@@ -107,13 +92,13 @@ pub struct ProbeNodeLabel;
 /// The render graph node that executes the probe compute shader.
 struct ProbeNode {
     // We query for probes that are ready to be processed.
-    query: QueryState<(Read<PreparedKernel>, Read<KernelSettings>)>,
+    query: QueryState<(Read<PreparedKernel>, Read<KernelBindGroup>)>,
 }
 
 impl FromWorld for ProbeNode {
     fn from_world(world: &mut World) -> Self {
         Self {
-            query: world.query_filtered::<(Read<PreparedKernel>, Read<KernelSettings>), ()>(),
+            query: world.query_filtered::<(Read<PreparedKernel>, Read<KernelBindGroup>), ()>(),
         }
     }
 }
@@ -245,22 +230,7 @@ impl ProbePipelinePlugin {
         }
     }
 
-    /// Syncs changes from the `KernelSettings` component to the `KernelBindGroup`'s `settings` field.
-    fn sync_kernel_settings(
-        mut query: Query<(&KernelSettings, &mut KernelBindGroup), Changed<KernelSettings>>,
-    ) {
-        for (settings, mut bind_group) in query.iter_mut() {
-            if bind_group.settings.center_coords != settings.center_coords
-                || bind_group.settings.kernel_size != settings.kernel_size
-            {
-                bind_group.settings = settings.clone();
-                info!(
-                    "Updated KernelBindGroup settings: center_coords={:?}",
-                    settings.center_coords
-                );
-            }
-        }
-    }
+ 
 }
 
 /// The render graph node that executes the probe compute shader.
@@ -282,14 +252,14 @@ impl render_graph::Node for ProbeNode {
             self.query.iter_manual(world).count()
         );
 
-        for (probe, settings) in self.query.iter_manual(world) {
+        for (probe, kernel_bind_group) in self.query.iter_manual(world) {
             info!(
                 "ProbeNode: Processing probe with center_coords: ({:.3}, {:.3})",
-                settings.center_coords.x, settings.center_coords.y
+                kernel_bind_group.settings.center_coords.x, kernel_bind_group.settings.center_coords.y
             );
 
             // Choose pipeline based on kernel size
-            let kernel_area = settings.kernel_size.x * settings.kernel_size.y;
+            let kernel_area = kernel_bind_group.settings.kernel_size.x * kernel_bind_group.settings.kernel_size.y;
 
             let (pipeline_id, dispatch_type) = if kernel_area <= 16.0 {
                 // 4x4 or smaller - use small pipeline (1x1 workgroups)
@@ -321,21 +291,21 @@ impl render_graph::Node for ProbeNode {
                 "small" => {
                     // Small pipeline uses 1x1 workgroups - dispatch one per pixel
                     pass.dispatch_workgroups(
-                        settings.kernel_size.x as u32,
-                        settings.kernel_size.y as u32,
+                        kernel_bind_group.settings.kernel_size.x as u32,
+                        kernel_bind_group.settings.kernel_size.y as u32,
                         1,
                     );
                 }
                 "medium" => {
                     // Medium pipeline uses 8x8 workgroups - calculate needed workgroups
-                    let workgroups_x = (settings.kernel_size.x as u32 + 7) / 8;
-                    let workgroups_y = (settings.kernel_size.y as u32 + 7) / 8;
+                    let workgroups_x = (kernel_bind_group.settings.kernel_size.x as u32).div_ceil(8);
+                    let workgroups_y = (kernel_bind_group.settings.kernel_size.y as u32).div_ceil(8);
                     pass.dispatch_workgroups(workgroups_x.max(1), workgroups_y.max(1), 1);
                 }
                 "large" => {
                     // Large pipeline uses 16x16 workgroups - calculate needed workgroups
-                    let workgroups_x = (settings.kernel_size.x as u32 + 15) / 16;
-                    let workgroups_y = (settings.kernel_size.y as u32 + 15) / 16;
+                    let workgroups_x = (kernel_bind_group.settings.kernel_size.x as u32).div_ceil(16);
+                    let workgroups_y = (kernel_bind_group.settings.kernel_size.y as u32).div_ceil(16);
                     pass.dispatch_workgroups(workgroups_x.max(1), workgroups_y.max(1), 1);
                 }
                 _ => unreachable!(),

@@ -8,44 +8,32 @@ use crate::probe_tool::{frustum::{near_plane_interaction::FrustumNearPlaneInters
 use self::{
     events::{ProbeCameraEvent},
 };
-use bevy::math::FloatOrd;
-use bevy::render::camera::ImageRenderTarget;
 use bevy::{
     app::{App, Plugin},
-    asset::{AssetServer, Assets, Handle, RenderAssetUsages, load_internal_asset, weak_handle},
-    core_pipeline::core_3d::{
-        Camera3d,
-        graph::{Core3d, Node3d},
-    },
+    asset::{Assets, Handle, RenderAssetUsages, weak_handle},
+    core_pipeline::core_3d::Camera3d,
     ecs::{
         component::Component,
         entity::Entity,
-        query::{QueryData, QueryState, Without},
-        system::{Commands, Query, Res, ResMut, SystemParamItem, lifetimeless::Read},
-        world::{FromWorld, World},
+        query::QueryData,
+        system::{Commands, Res, ResMut},
     },
     log::info,
     math::{UVec2, Vec2, Vec4},
     prelude::*,
     prelude::{
-        Added, AppExtStates, Camera, Image, IntoScheduleConfigs, Resource, Transform, Trigger,
+        AppExtStates, Camera, Image, IntoScheduleConfigs, Transform, Trigger,
         Update,
     },
     render::{
-        Render, RenderApp, RenderSet,
         camera::{PerspectiveProjection, Projection, RenderTarget},
-        extract_component::{ExtractComponent, ExtractComponentPlugin},
+        extract_component::ExtractComponent,
         gpu_readback::{Readback, ReadbackComplete},
-        render_asset::RenderAssets,
-        render_graph::{self, RenderGraphApp, RenderLabel},
         render_resource::{
-            AsBindGroup, BindGroup, BindGroupLayout, BufferUsages, CachedComputePipelineId,
-            ComputePassDescriptor, ComputePipelineDescriptor, Extent3d, PipelineCache, Shader,
+            BufferUsages, Extent3d, Shader,
             ShaderType, TextureDimension, TextureFormat, TextureUsages,
         },
-        renderer::{RenderContext, RenderDevice},
-        storage::{GpuShaderStorageBuffer, ShaderStorageBuffer},
-        texture::{FallbackImage, GpuImage},
+        storage::ShaderStorageBuffer,
         view::RenderLayers,
     },
     utils::default,
@@ -66,24 +54,11 @@ pub enum ProbeToolState {
 
 
 
-
-
-const PROBE_KERNEL_SMALL_SHADER_HANDLE: Handle<Shader> =
-    weak_handle!("5eb828ff-9ee5-4c25-a12a-886e2aeb096d");
-const PROBE_KERNEL_MEDIUM_SHADER_HANDLE: Handle<Shader> =
-    weak_handle!("5db818ff-9ee5-4c25-a12a-886e2aeb096d");
-const PROBE_KERNEL_LARGE_SHADER_HANDLE: Handle<Shader> =
-    weak_handle!("5db827ff-9ee5-4c25-a12a-886e2aeb096d");
-
-
-
 /// This plugin provides the components and systems for GPU-based render target probing.
 pub struct ProbeToolPlugin;
 
 impl Plugin for ProbeToolPlugin {
     fn build(&self, app: &mut App) {
-       
-
         app.add_plugins((
             KernelHUDPlugin,
             FrustumPlugin,
@@ -96,7 +71,7 @@ impl Plugin for ProbeToolPlugin {
             Self::handle_state_transition
                 .run_if(on_event::<StateTransitionEvent<ProbeToolState>>),
         )
-        .add_systems(Update, (Self::handle_event));
+        .add_systems(Update, Self::handle_event);
     }
 
  
@@ -158,13 +133,12 @@ pub struct ProbeCameraQuery {
     pub camera_3d: &'static Camera3d,
     pub camera: &'static mut Camera,
     pub projection: &'static mut Projection,
-    pub kernel_settings: &'static mut KernelSettings,
     pub kernel_bind_group: &'static mut KernelBindGroup,
     pub near_plane_intersection: &'static mut FrustumNearPlaneIntersection,
     pub readback: &'static mut Readback,
 }
 
-#[derive(Component, Clone, PartialEq, ExtractComponent, ShaderType, Default)]
+#[derive(Clone, PartialEq, ShaderType, Default)]
 pub struct KernelSettings {
     /// Size of the kernel in pixels.
     pub kernel_size: Vec2,
@@ -186,7 +160,6 @@ impl ProbeToolPlugin {
     ) -> (
         (
             ProbeCamera,
-            KernelSettings,
             Transform,
             Camera,
             Camera3d,
@@ -237,10 +210,9 @@ impl ProbeToolPlugin {
 
         let components = (
             ProbeCamera {
-                resolution: resolution.clone(),
+                resolution,
             },
-            settings.clone(),
-            transform.clone(),
+            transform,
             Camera {
                 // Render to our texture instead of the main window
                 target: RenderTarget::Image(image_handle.clone().into()),
@@ -282,8 +254,8 @@ impl ProbeToolPlugin {
                 } => {
                     let (components, _image_handle, _ssbo_handle, kernel_size) =
                         Self::create_probe_camera_components(
-                            transform.clone(),
-                            resolution.clone(),
+                            *transform,
+                            *resolution,
                             &mut images,
                             &mut ssbo_assets,
                         );
@@ -307,7 +279,7 @@ impl ProbeToolPlugin {
                                 info!(
                                     "Readback complete: checksum={:.3}, sample_pixel={:?}",
                                     checksum,
-                                    kernel_data.data.get(0)
+                                    kernel_data.data.first()
                                 );
                             },
                         );

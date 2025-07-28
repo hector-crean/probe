@@ -16,16 +16,13 @@
 use bevy::{
     color::palettes::css::*,
     gizmos::config::{GizmoConfigGroup, GizmoConfigStore},
-    input::mouse::MouseMotion,
     math::Ray3d,
     prelude::*,
     render::{camera::Projection, view::RenderLayers},
 };
 
 use crate::{
-    MainCamera,
-    camera_controller::probe_camera_controller::ProbeCameraController,
-    probe_tool::{KernelSettings, ProbeCamera},
+    probe_tool::{probe_pipeline::KernelBindGroup, KernelSettings, ProbeCamera}, MainCamera
 };
 
 #[derive(Default, Reflect, GizmoConfigGroup)]
@@ -71,7 +68,7 @@ fn update_near_plane_intersection(
             &GlobalTransform,
             &mut FrustumNearPlaneIntersection,
             &Projection,
-            &mut KernelSettings,
+            &mut KernelBindGroup,
         ),
         (With<ProbeCamera>, Without<MainCamera>),
     >,
@@ -90,7 +87,7 @@ fn update_near_plane_intersection(
         frustrum_camera_transform,
         mut frustrum_intersection,
         frustrum_projection,
-        mut kernel_settings,
+        mut kernel_bind_group,
     )) = frustrum_camera_query.single_mut()
     else {
         return;
@@ -194,7 +191,7 @@ fn update_near_plane_intersection(
                 }
             };
 
-            kernel_settings.center_coords = Vec2::new(
+            kernel_bind_group.settings.center_coords = Vec2::new(
                 frutum_viewport_position.x / viewport_size.x,
                 frutum_viewport_position.y / viewport_size.y,
             );
