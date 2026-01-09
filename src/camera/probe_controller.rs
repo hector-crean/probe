@@ -1,8 +1,10 @@
+//! Controller for moving probe cameras.
+
 use bevy::prelude::*;
 
-use crate::probe_tool::ProbeCamera;
+use crate::probe::ProbeCamera;
 
-
+/// Plugin for the probe camera controller.
 pub struct ProbeCameraControllerPlugin;
 
 impl Plugin for ProbeCameraControllerPlugin {
@@ -11,7 +13,7 @@ impl Plugin for ProbeCameraControllerPlugin {
     }
 }
 
-/// Simple camera controller for moving around the scene
+/// Simple camera controller for moving around the scene.
 #[derive(Component)]
 pub struct ProbeCameraController {
     pub sensitivity: f32,
@@ -35,7 +37,6 @@ fn frustrum_camera_controller(
     let Ok((mut transform, controller)) = query.single_mut() else {
         return;
     };
-
 
     // Handle WASD movement
     let mut velocity = Vec3::ZERO;

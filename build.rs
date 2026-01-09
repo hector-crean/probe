@@ -1,7 +1,7 @@
 use wesl::Wesl;
 
 fn main() {
-    let resolver = Wesl::new("src/probe_tool/shaders");
+    let resolver = Wesl::new("src/probe/pipeline/shaders");
 
     resolver.build_artefact("kernel_small", "kernel_small");
     resolver.build_artefact("kernel_medium", "kernel_medium");

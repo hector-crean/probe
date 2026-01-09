@@ -14,29 +14,27 @@ use bevy::{
     color::palettes::css::*,
     gizmos::config::{GizmoConfigGroup, GizmoConfigStore},
     input::mouse::MouseButton,
-    math::Ray3d,
     prelude::*,
 };
 
-use crate::{
-    probe_tool::{probe_pipeline::KernelBindGroup, ProbeCamera},
-    MainCamera,
-};
+use crate::probe::{components::ProbeCamera, frustum::FrustumNearPlaneIntersection, pipeline::KernelBindGroup};
 
+/// Gizmo group for main camera visualization.
 #[derive(Default, Reflect, GizmoConfigGroup)]
 pub struct MainCameraGizmos;
 
-/// Resource to track drag state for near plane interaction
+/// Resource to track drag state for near plane interaction.
 #[derive(Resource, Default)]
 pub struct NearPlaneDragState {
-    /// Whether the user is currently dragging on the near plane
+    /// Whether the user is currently dragging on the near plane.
     pub is_dragging: bool,
-    /// The last valid sampling point (persists after drag ends)
+    /// The last valid sampling point (persists after drag ends).
     pub locked_point: Option<Vec3>,
-    /// Normalized UV coordinates of the locked sampling point
+    /// Normalized UV coordinates of the locked sampling point.
     pub locked_uv: Option<Vec2>,
 }
 
+/// Plugin for near plane interaction.
 pub struct FrustumNearPlaneInteractionPlugin;
 
 fn setup_main_camera_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
@@ -61,20 +59,12 @@ impl Plugin for FrustumNearPlaneInteractionPlugin {
     }
 }
 
-/// Component to store the near plane intersection point
-#[derive(Component, Default)]
-pub struct FrustumNearPlaneIntersection {
-    /// Current hover intersection point (if within bounds)
-    pub point: Option<Vec3>,
-    /// The ray from main camera through cursor
-    pub ray: Option<Ray3d>,
-    /// Whether the hover point is within the near plane bounds
-    pub is_within_bounds: bool,
-    /// The intersection point even if outside bounds (for visualization)
-    pub intersection_world_point: Option<Vec3>,
-}
+/// Marker component for the main camera (used for interaction raycasting).
+/// Note: This should be added by the example/application code, not the library.
+#[derive(Component)]
+pub struct MainCamera;
 
-/// System to calculate intersection data (hover detection only, doesn't update sampling point)
+/// System to calculate intersection data (hover detection only, doesn't update sampling point).
 fn update_near_plane_intersection(
     window: Single<&Window>,
     mut frustrum_camera_query: Query<
@@ -96,8 +86,12 @@ fn update_near_plane_intersection(
         return;
     };
 
-    let Ok((frustrum_camera, frustrum_camera_transform, mut frustrum_intersection, frustrum_projection)) =
-        frustrum_camera_query.single_mut()
+    let Ok((
+        frustrum_camera,
+        frustrum_camera_transform,
+        mut frustrum_intersection,
+        frustrum_projection,
+    )) = frustrum_camera_query.single_mut()
     else {
         return;
     };
@@ -192,8 +186,8 @@ fn update_near_plane_intersection(
     }
 }
 
-/// System to handle click/drag interaction on the near plane
-/// Updates the kernel sampling point only when user is clicking/dragging
+/// System to handle click/drag interaction on the near plane.
+/// Updates the kernel sampling point only when user is clicking/dragging.
 fn handle_near_plane_click_drag(
     mouse_button: Res<ButtonInput<MouseButton>>,
     mut drag_state: ResMut<NearPlaneDragState>,
@@ -253,7 +247,7 @@ fn handle_near_plane_click_drag(
     }
 }
 
-/// System to draw visualization based on intersection and drag state
+/// System to draw visualization based on intersection and drag state.
 fn draw_near_plane_visualization(
     mut gizmos: Gizmos<MainCameraGizmos>,
     drag_state: Res<NearPlaneDragState>,
@@ -285,7 +279,11 @@ fn draw_near_plane_visualization(
         let camera_right = frustrum_camera_transform.right() * cross_size;
         let camera_up = frustrum_camera_transform.up() * cross_size;
 
-        gizmos.line(locked_point - camera_right, locked_point + camera_right, GREEN);
+        gizmos.line(
+            locked_point - camera_right,
+            locked_point + camera_right,
+            GREEN,
+        );
         gizmos.line(locked_point - camera_up, locked_point + camera_up, GREEN);
 
         // Draw the probe ray from sampling point into the scene
@@ -338,18 +336,10 @@ fn draw_near_plane_visualization(
         if let Some(point) = frustrum_intersection.point {
             // Animated ring around the drag point
             // Create an isometry (position + rotation) for the circle
-            let rotation = Quat::from_rotation_arc(Vec3::Z, frustrum_camera_transform.forward().as_vec3());
+            let rotation =
+                Quat::from_rotation_arc(Vec3::Z, frustrum_camera_transform.forward().as_vec3());
             let isometry = Isometry3d::new(point, rotation);
             gizmos.circle(isometry, 0.15, YELLOW);
         }
     }
 }
-
-
-
-
-
-
-
-
-

@@ -1,14 +1,10 @@
+//! Mesh building for probe frustum visualization.
 
-use bevy::{
-    prelude::*,
-};
+use bevy::prelude::*;
 use bevy_asset::RenderAssetUsages;
 use bevy_mesh::Indices;
 
-
-
-
-
+/// A probe frustum based on a perspective projection.
 pub struct ProbeFrustum {
     pub projection: PerspectiveProjection,
 }
@@ -19,11 +15,7 @@ impl ProbeFrustum {
     }
 }
 
-
-
-
-
-/// Mesh builder for creating frustum wireframes
+/// Mesh builder for creating frustum wireframes.
 pub struct ProbeFrustumMeshBuilder {
     pub near: f32,
     pub far: f32,
@@ -135,7 +127,3 @@ impl Meshable for ProbeFrustum {
         ProbeFrustumMeshBuilder::from_perspective_projection(&self.projection)
     }
 }
-
-
-
-

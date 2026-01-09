@@ -99,29 +99,28 @@ fn process_probe_pixel(id: vec3<u32>) {
     output_buffer[output_index] = color;
 }
 
-// Small workgroup variant optimized for tiny kernels (1-16 pixels)
-// Uses 1x1 workgroups for perfect pixel-to-thread mapping with zero waste
+// Medium workgroup variant optimized for medium kernels (17-256 pixels)
+// Uses 8x8 workgroups for good GPU occupancy
 @compute @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     process_probe_pixel(global_id);
 }
 
 
-// Shader Variant: Small Workgroup (WESL)
-// Workgroup Size: 1 x 1 x 1
-// Optimization Target: Minimal kernels (1x1 to 4x4)
+// Shader Variant: Medium Workgroup (WESL)
+// Workgroup Size: 8 x 8 x 1
+// Optimization Target: Medium kernels (5x5 to 16x16)
 
 // Advantages:
-// - Zero thread waste for small kernels
-// - Simple dispatch calculation (1:1 mapping)
-// - Minimal GPU resource usage
-// - Perfect for precise single-pixel probes
+// - Good balance of occupancy and waste
+// - Efficient for typical kernel sizes
+// - Better GPU utilization than small variant
 
 // Best Use Cases:
-// - Single pixel color picking
-// - Small kernel convolutions
-// - Precise measurements
-// - Debug/diagnostic sampling
+// - Standard convolution kernels
+// - Blur operations
+// - Edge detection
+// - General image processing
 
 // WESL Features Used:
 // - Module imports for code sharing

@@ -1,16 +1,16 @@
+//! Worldspace UI nodes that follow 3D positions.
+
+use bevy::log;
 use bevy::prelude::*;
 use bevy::window::WindowResized;
 use std::marker::PhantomData;
-use bevy::log;
 
-
-
+/// A UI node that tracks a 3D world position.
 #[derive(Component)]
 #[require(Node, ZIndex, BackgroundColor)]
-
 pub struct WorldspaceUiNode<M: Component + Default> {
     pub world_position: Vec3,
-    /// Size of the UI node in pixels
+    /// Size of the UI node in pixels.
     pub ui_size: Vec2,
     _child: PhantomData<M>,
 }
@@ -19,27 +19,37 @@ impl<M: Component + Default> WorldspaceUiNode<M> {
     const DEFAULT_UI_SIZE: Vec2 = Vec2::new(50.0, 50.0);
 
     /// Creates a new WorldspaceUiNode at the specified world position
-    /// with default size
+    /// with default size.
     pub fn new(world_position: Vec3) -> Self {
-        Self { 
-            world_position, 
+        Self {
+            world_position,
             ui_size: Self::DEFAULT_UI_SIZE,
-            _child: PhantomData 
+            _child: PhantomData,
         }
     }
 
-    /// Creates a new WorldspaceUiNode with custom size
+    /// Creates a new WorldspaceUiNode with custom size.
     pub fn with_size(world_position: Vec3, ui_size: Vec2) -> Self {
-        Self { 
+        Self {
             world_position,
             ui_size,
-            _child: PhantomData 
+            _child: PhantomData,
         }
     }
 
     fn setup(
         mut commands: Commands,
-        mut query: Query<(Entity, &WorldspaceUiNode<M>, &Children, &mut Node, &mut BackgroundColor, &mut ZIndex), Added<WorldspaceUiNode<M>>>,
+        mut query: Query<
+            (
+                Entity,
+                &WorldspaceUiNode<M>,
+                &Children,
+                &mut Node,
+                &mut BackgroundColor,
+                &mut ZIndex,
+            ),
+            Added<WorldspaceUiNode<M>>,
+        >,
         camera_query: Query<
             (&Camera, &GlobalTransform),
             (With<Camera3d>, Changed<GlobalTransform>),
@@ -49,7 +59,9 @@ impl<M: Component + Default> WorldspaceUiNode<M> {
             return;
         };
 
-        for (entity, worldspace_ui_node, children, mut node, mut bg_color, mut z_index) in &mut query {
+        for (entity, worldspace_ui_node, children, mut node, mut bg_color, mut z_index) in
+            &mut query
+        {
             let screen_position = match camera
                 .world_to_viewport(camera_transform, worldspace_ui_node.world_position)
             {
@@ -57,7 +69,7 @@ impl<M: Component + Default> WorldspaceUiNode<M> {
                 Err(_) => {
                     log::error!("Failed to convert world position to screen position.");
                     Vec2::ZERO
-                },
+                }
             };
 
             // Modify the existing components in place
@@ -100,7 +112,7 @@ impl<M: Component + Default> WorldspaceUiNode<M> {
         let mut any_updates = false;
         for (worldspace_ui_node, mut node, mut z_index) in worldspace_button_query.iter_mut() {
             let world_position = worldspace_ui_node.world_position;
-            
+
             match camera.world_to_viewport(camera_transform, world_position) {
                 Ok(screen_position) => {
                     node.left = Val::Px(screen_position.x);
@@ -144,9 +156,9 @@ impl<M: Component + Default> WorldspaceUiNode<M> {
 
         Self::update_node_positions(&mut worldspace_ui_node_query, camera, camera_transform);
     }
-
 }
 
+/// Plugin for worldspace UI nodes with a specific marker component.
 pub struct WorldspaceUiNodePlugin<M: Component + Default> {
     _child: PhantomData<M>,
 }
@@ -157,20 +169,24 @@ impl<M: Component + Default> Default for WorldspaceUiNodePlugin<M> {
     }
 }
 
-impl<M: Component + Default>  WorldspaceUiNodePlugin<M> {
+impl<M: Component + Default> WorldspaceUiNodePlugin<M> {
     pub fn new() -> Self {
-        Self { _child: PhantomData }
+        Self {
+            _child: PhantomData,
+        }
     }
 }
 
 impl<M: Component + Default> Plugin for WorldspaceUiNodePlugin<M> {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (
-            WorldspaceUiNode::<M>::setup,
-            WorldspaceUiNode::<M>::sync_worldspace_position_on_camera_change,
-            WorldspaceUiNode::<M>::sync_worldspace_position_on_window_resize
-                .run_if(on_message::<WindowResized>),
-        ));
+        app.add_systems(
+            Update,
+            (
+                WorldspaceUiNode::<M>::setup,
+                WorldspaceUiNode::<M>::sync_worldspace_position_on_camera_change,
+                WorldspaceUiNode::<M>::sync_worldspace_position_on_window_resize
+                    .run_if(on_message::<WindowResized>),
+            ),
+        );
     }
 }
-

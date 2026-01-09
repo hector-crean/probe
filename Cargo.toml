@@ -2,6 +2,16 @@
 name = "probe"
 version = "0.1.0"
 edition = "2024"
+description = "GPU-based render target probing for Bevy"
+license = "MIT OR Apache-2.0"
+
+[features]
+# Enable burn by default during development (remove for release if desired)
+default = ["burn"]
+# Enable Burn ML framework integration
+burn = ["dep:burn"]
+# Enable ndarray integration
+ndarray = ["dep:ndarray"]
 
 [dependencies]
 bevy = { version = "0.17.3", features = ["shader_format_wesl"] }
@@ -11,6 +21,22 @@ bevy_mesh = { version = "0.17.3" }
 bevy_camera = { version = "0.17.3" }
 wesl = { version = "0.1.2" }
 
+# Optional ML framework dependencies
+burn = { version = "0.16", optional = true, default-features = false, features = ["wgpu", "autodiff"] }
+ndarray = { version = "0.16", optional = true }
 
 [build-dependencies]
 wesl = { version = "0.1.2" }
+
+[[example]]
+name = "basic"
+path = "examples/basic.rs"
+
+[[example]]
+name = "interaction"
+path = "examples/interaction.rs"
+
+[[example]]
+name = "burn_integration"
+path = "examples/burn_integration.rs"
+required-features = ["burn"]

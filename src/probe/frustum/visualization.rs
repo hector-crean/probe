@@ -1,46 +1,22 @@
-pub mod mesh_builder;
-pub mod near_plane_interaction;
+//! Frustum visualization systems.
+
 use bevy::prelude::*;
 
-use crate::probe_tool::{
-    KernelBindGroup, ProbeCamera,
-    frustum::mesh_builder::{ProbeFrustum, ProbeFrustumMeshBuilder},
+use crate::probe::{
+    components::ProbeCamera,
+    frustum::{
+        components::{FrustumMeshMarker, NearPlaneMarker, ProbeVisualizationChildren},
+        mesh::{ProbeFrustum, ProbeFrustumMeshBuilder},
+    },
+    pipeline::KernelBindGroup,
 };
 
-/// Marker component for frustum wireframe entities
-#[derive(Component)]
-pub struct FrustumMeshMarker;
-
-/// Marker component for near plane entities
-#[derive(Component)]
-pub struct NearPlaneMarker;
-
-/// Component that stores references to child entities for easy management
-#[derive(Component)]
-#[derive(Default)]
-pub struct ProbeVisualizationChildren {
-    pub frustum_entity: Option<Entity>,
-    pub near_plane_entity: Option<Entity>,
-}
-
-
-pub struct FrustumPlugin;
-
-impl Plugin for FrustumPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_plugins(near_plane_interaction::FrustumNearPlaneInteractionPlugin);
-        app.add_systems(Update, (draw_frustum, update_probe_visualizations));
-    }
-}
-
+/// System to draw the frustum for newly added probe cameras.
 pub fn draw_frustum(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    probe_query: Query<
-        (Entity, &Projection, &KernelBindGroup),
-        Added<ProbeCamera>,
-    >,
+    probe_query: Query<(Entity, &Projection, &KernelBindGroup), Added<ProbeCamera>>,
 ) {
     for (probe_entity, projection, kernel_bind_group) in probe_query.iter() {
         let perspective = match projection {
@@ -75,7 +51,9 @@ pub fn draw_frustum(
         let near_plane_entity = commands
             .spawn((
                 NearPlaneMarker,
-                Mesh3d::from(meshes.add(Plane3d::new(-Vec3::Z, Vec2::new(near_half_width, near_half_height)))),
+                Mesh3d::from(
+                    meshes.add(Plane3d::new(-Vec3::Z, Vec2::new(near_half_width, near_half_height))),
+                ),
                 MeshMaterial3d(materials.add(StandardMaterial {
                     base_color: Color::WHITE,
                     base_color_texture: Some(kernel_bind_group.source_texture.clone()),
@@ -101,7 +79,8 @@ pub fn draw_frustum(
     }
 }
 
-fn update_probe_visualizations(
+/// System to update frustum visualizations when projection or kernel settings change.
+pub fn update_probe_visualizations(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     probe_query: Query<
@@ -113,7 +92,11 @@ fn update_probe_visualizations(
     >,
     mut frustum_query: Query<&mut Mesh3d, (With<FrustumMeshMarker>, Without<NearPlaneMarker>)>,
     mut near_plane_query: Query<
-        (&mut Mesh3d, &mut Transform, Option<&MeshMaterial3d<StandardMaterial>>),
+        (
+            &mut Mesh3d,
+            &mut Transform,
+            Option<&MeshMaterial3d<StandardMaterial>>,
+        ),
         (With<NearPlaneMarker>, Without<FrustumMeshMarker>),
     >,
 ) {
@@ -132,8 +115,7 @@ fn update_probe_visualizations(
             Vec2::new(near_half_width, near_half_height),
         ));
 
-        let frustum_mesh_builder =
-            ProbeFrustumMeshBuilder::from_perspective_projection(perspective);
+        let frustum_mesh_builder = ProbeFrustumMeshBuilder::from_perspective_projection(perspective);
         let new_frustum_mesh = meshes.add(frustum_mesh_builder.build());
 
         // Use the source_texture from KernelBindGroup (same as the render target)

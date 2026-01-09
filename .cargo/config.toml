@@ -1,0 +1,11 @@
+# Cargo configuration for this workspace
+
+[alias]
+# Run examples
+basic = "run --example basic"
+burn = "run --example burn_integration"
+interaction = "run --example interaction"
+
+# Build without ML features (smaller binary, faster compile)
+check-minimal = "check --no-default-features"
+build-minimal = "build --no-default-features --release"
