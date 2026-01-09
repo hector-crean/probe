@@ -2,43 +2,33 @@ use crate::probe_tool::KernelSettings;
 
 use bevy::{
     app::{App, Plugin},
-    asset::{AssetServer, Handle, load_internal_asset, weak_handle},
+    asset::{load_internal_asset, uuid_handle, weak_handle, AssetServer, Handle},
     core_pipeline::core_3d::graph::{Core3d, Node3d},
     ecs::{
         component::Component,
         entity::Entity,
         query::QueryState,
-        system::{Commands, Query, Res, SystemParamItem, lifetimeless::Read},
+        system::{lifetimeless::Read, Commands, Query, Res, SystemParamItem},
         world::{FromWorld, World},
     },
     log::info,
-    prelude::*,
-    prelude::{
-        Image, IntoScheduleConfigs, Resource,
-        Update,
-    },
+    prelude::{Image, IntoScheduleConfigs, Resource, *},
     render::{
-        Render, RenderApp, RenderSet,
-        extract_component::{ExtractComponent, ExtractComponentPlugin},
-        render_asset::RenderAssets,
-        render_graph::{self, RenderGraphApp, RenderLabel},
-        render_resource::{
+        extract_component::{ExtractComponent, ExtractComponentPlugin}, render_asset::RenderAssets, render_graph::{self, RenderLabel}, render_resource::{
             AsBindGroup, BindGroup, BindGroupLayout, CachedComputePipelineId,
-            ComputePassDescriptor, ComputePipelineDescriptor, PipelineCache, Shader,
+            ComputePassDescriptor, ComputePipelineDescriptor, PipelineCache,
             ShaderType,
-        },
-        renderer::{RenderContext, RenderDevice},
-        storage::{GpuShaderStorageBuffer, ShaderStorageBuffer},
-        texture::{FallbackImage, GpuImage},
+        }, renderer::{RenderContext, RenderDevice}, storage::{GpuShaderStorageBuffer, ShaderStorageBuffer}, texture::{FallbackImage, GpuImage}, Render, RenderApp, RenderSystems
     },
 };
+use bevy::render::render_graph::RenderGraphExt;
 
 const PROBE_KERNEL_SMALL_SHADER_HANDLE: Handle<Shader> =
-    weak_handle!("5eb828ff-9ee5-4c25-a12a-886e2aeb096d");
+uuid_handle!("5eb828ff-9ee5-4c25-a12a-886e2aeb096d");
 const PROBE_KERNEL_MEDIUM_SHADER_HANDLE: Handle<Shader> =
-    weak_handle!("5db818ff-9ee5-4c25-a12a-886e2aeb096d");
+uuid_handle!("5db818ff-9ee5-4c25-a12a-886e2aeb096d");
 const PROBE_KERNEL_LARGE_SHADER_HANDLE: Handle<Shader> =
-    weak_handle!("5db827ff-9ee5-4c25-a12a-886e2aeb096d");
+uuid_handle!("5db827ff-9ee5-4c25-a12a-886e2aeb096d");
 
 /// This plugin provides the components and systems for GPU-based render target probing.
 pub struct ProbePipelinePlugin;
@@ -79,7 +69,7 @@ impl Plugin for ProbePipelinePlugin {
             .init_resource::<ProbePipeline>()
             .add_systems(
                 Render,
-                Self::prepare_probe_bind_groups.in_set(RenderSet::PrepareBindGroups),
+                Self::prepare_probe_bind_groups.in_set(RenderSystems::PrepareBindGroups),
             )
             .add_render_graph_node::<ProbeNode>(Core3d, ProbeNodeLabel)
             .add_render_graph_edge(Core3d, Node3d::EndMainPass, ProbeNodeLabel);
@@ -144,7 +134,7 @@ impl FromWorld for ProbePipeline {
             layout: vec![layout.clone()],
             shader: PROBE_KERNEL_SMALL_SHADER_HANDLE,
             shader_defs: vec![],
-            entry_point: "main".into(),
+            entry_point: Some("main".into()),
             push_constant_ranges: vec![],
         });
 
@@ -154,7 +144,7 @@ impl FromWorld for ProbePipeline {
             layout: vec![layout.clone()],
             shader: PROBE_KERNEL_MEDIUM_SHADER_HANDLE,
             shader_defs: vec![],
-            entry_point: "main".into(),
+            entry_point: Some("main".into()),
             push_constant_ranges: vec![],
         });
 
@@ -164,7 +154,7 @@ impl FromWorld for ProbePipeline {
             layout: vec![layout.clone()],
             shader: PROBE_KERNEL_LARGE_SHADER_HANDLE,
             shader_defs: vec![],
-            entry_point: "main".into(),
+            entry_point: Some("main".into()),
             push_constant_ranges: vec![],
         });
 
@@ -179,7 +169,7 @@ impl FromWorld for ProbePipeline {
 
 impl ProbePipelinePlugin {
     /// Prepares the `BindGroup` for each probe on the render world.
-    /// This runs in `RenderSet::PrepareBindGroups`, and Bevy's `AsBindGroup` infrastructure
+    /// This runs in `RenderSystems::PrepareBindGroups`, and Bevy's `AsBindGroup` infrastructure
     /// has already prepared the underlying buffers for us.
     fn prepare_probe_bind_groups(
         mut commands: Commands,
@@ -247,16 +237,16 @@ impl render_graph::Node for ProbeNode {
         let pipeline_cache = world.resource::<PipelineCache>();
         let probe_pipeline = world.resource::<ProbePipeline>();
 
-        info!(
-            "ProbeNode: Running compute shader for {} probes",
-            self.query.iter_manual(world).count()
-        );
+        // info!(
+        //     "ProbeNode: Running compute shader for {} probes",
+        //     self.query.iter_manual(world).count()
+        // );
 
         for (probe, kernel_bind_group) in self.query.iter_manual(world) {
-            info!(
-                "ProbeNode: Processing probe with center_coords: ({:.3}, {:.3})",
-                kernel_bind_group.settings.center_coords.x, kernel_bind_group.settings.center_coords.y
-            );
+            // info!(
+            //     "ProbeNode: Processing probe with center_coords: ({:.3}, {:.3})",
+            //     kernel_bind_group.settings.center_coords.x, kernel_bind_group.settings.center_coords.y
+            // );
 
             // Choose pipeline based on kernel size
             let kernel_area = kernel_bind_group.settings.kernel_size.x * kernel_bind_group.settings.kernel_size.y;

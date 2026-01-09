@@ -3,15 +3,16 @@ pub mod frustum;
 pub mod kernel;
 pub mod probe_pipeline;
 
-use crate::probe_tool::{frustum::{near_plane_interaction::FrustumNearPlaneIntersection, FrustumPlugin}, kernel::{KernelDataResource, KernelHUDPlugin}, probe_pipeline::{KernelBindGroup, ProbePipelinePlugin}};
+use crate::probe_tool::{frustum::{near_plane_interaction::FrustumNearPlaneIntersection, FrustumPlugin}, kernel::KernelPopupPlugin, probe_pipeline::{KernelBindGroup, ProbePipelinePlugin}};
 
 use self::{
-    events::{ProbeCameraEvent},
+    events::{ProbeCameraCommand, ProbeCameraOutputMessage},
 };
+use bevy_camera::{Camera3d, PerspectiveProjection, Projection, RenderTarget};
+use bevy_camera::visibility::RenderLayers;
 use bevy::{
     app::{App, Plugin},
-    asset::{Assets, Handle, RenderAssetUsages, weak_handle},
-    core_pipeline::core_3d::Camera3d,
+    asset::{Assets, Handle, RenderAssetUsages},
     ecs::{
         component::Component,
         entity::Entity,
@@ -22,25 +23,25 @@ use bevy::{
     math::{UVec2, Vec2, Vec4},
     prelude::*,
     prelude::{
-        AppExtStates, Camera, Image, IntoScheduleConfigs, Transform, Trigger,
+        AppExtStates, Camera, Image, IntoScheduleConfigs, Transform, On,
         Update,
     },
     render::{
-        camera::{PerspectiveProjection, Projection, RenderTarget},
-        extract_component::ExtractComponent,
         gpu_readback::{Readback, ReadbackComplete},
         render_resource::{
-            BufferUsages, Extent3d, Shader,
+            BufferUsages, Extent3d,
             ShaderType, TextureDimension, TextureFormat, TextureUsages,
         },
         storage::ShaderStorageBuffer,
-        view::RenderLayers,
     },
     utils::default,
 };
 
-
-
+/// Component to store kernel size information for probe cameras
+#[derive(Component)]
+pub struct ProbeKernelConfig {
+    pub kernel_size: Vec2,
+}
 
 
 #[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -60,29 +61,58 @@ pub struct ProbeToolPlugin;
 impl Plugin for ProbeToolPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
-            KernelHUDPlugin,
+            KernelPopupPlugin,
             FrustumPlugin,
             ProbePipelinePlugin
         ))
-        .add_event::<ProbeCameraEvent>()
+        .add_message::<ProbeCameraCommand>()
+        .add_message::<ProbeCameraOutputMessage>()
         .init_state::<ProbeToolState>()
         .add_systems(
             Update,
             Self::handle_state_transition
-                .run_if(on_event::<StateTransitionEvent<ProbeToolState>>),
+                .run_if(on_message::<StateTransitionEvent<ProbeToolState>>),
         )
-        .add_systems(Update, Self::handle_event);
+        .add_systems(Update, Self::handle_message)
+        .add_observer(handle_readback_complete);
     }
-
- 
 }
 
+/// Observer function to handle GPU readback completion
+fn handle_readback_complete(
+    trigger: On<ReadbackComplete>,
+    kernel_config_query: Query<&ProbeKernelConfig>,
+    mut event_writer: MessageWriter<ProbeCameraOutputMessage>,
+) {
+    let entity = trigger.entity;
+    
+    // Get the kernel configuration for this probe camera
+    let Ok(kernel_config) = kernel_config_query.get(entity) else {
+        info!("No kernel config found for entity {:?}", entity);
+        return;
+    };
+
+    // Convert the readback data to kernel format
+    let kernel: Vec<Vec4> = trigger.event().to_shader_type();
+
+    let event = ProbeCameraOutputMessage::KernelUpdated {
+        entity,
+        data: kernel,
+        kernel_size: kernel_config.kernel_size,
+    };  
+
+    info!("{}", event);
+
+    // Emit the kernel updated event
+    event_writer.write(event);
+}
+ 
 
 
 
 impl ProbeToolPlugin {
     fn handle_state_transition(
-        mut state_reader: EventReader<StateTransitionEvent<ProbeToolState>>,
+        mut state_reader: MessageReader<StateTransitionEvent<ProbeToolState>>,
     ) {
         for event in state_reader.read() {
             info!("ProbeToolPlugin state changed from {:?} to {:?}", event.exited, event.entered);
@@ -224,7 +254,8 @@ impl ProbeToolPlugin {
                 near: 2.0,
                 far: 4.0,
                 fov: std::f32::consts::PI / 3.0, // 60 degrees
-                aspect_ratio,                    // Explicitly set the aspect ratio
+                aspect_ratio,    
+                ..Default::default()                // Explicitly set the aspect ratio
             }),
             KernelBindGroup {
                 settings,
@@ -240,15 +271,15 @@ impl ProbeToolPlugin {
     }
 
     /// Attaches the necessary probe components to any camera that has the `Probe` marker component.
-    fn handle_event(
-        mut event_rdr: EventReader<ProbeCameraEvent>,
+    fn handle_message(
+        mut event_rdr: MessageReader<ProbeCameraCommand>,
         mut commands: Commands,
         mut ssbo_assets: ResMut<Assets<ShaderStorageBuffer>>,
         mut images: ResMut<Assets<Image>>,
     ) {
         for probe_camera_event in event_rdr.read() {
             match probe_camera_event {
-                ProbeCameraEvent::Add {
+                ProbeCameraCommand::Add {
                     transform,
                     resolution,
                 } => {
@@ -262,27 +293,7 @@ impl ProbeToolPlugin {
 
                     commands
                         .spawn(components)
-                        .observe(
-                            move |trigger: Trigger<ReadbackComplete>,
-                                  mut kernel_data: ResMut<KernelDataResource>| {
-                                // This matches the type which was used to create the `ShaderStorageBuffer` above,
-                                // and is a convenient way to interpret the data.
-                                let kernel: Vec<Vec4> = trigger.event().to_shader_type();
-
-                                // Simple checksum to track if data is changing
-                                let checksum: f32 = kernel.iter().map(|v| v.x + v.y + v.z + v.w).sum();
-
-                                // Update the kernel data resource for UI visualization
-                                kernel_data.data = kernel;
-                                kernel_data.kernel_size = kernel_size; // Use the actual kernel size
-
-                                info!(
-                                    "Readback complete: checksum={:.3}, sample_pixel={:?}",
-                                    checksum,
-                                    kernel_data.data.first()
-                                );
-                            },
-                        );
+                        .insert(ProbeKernelConfig { kernel_size });
                 }
             }
         }

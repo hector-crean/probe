@@ -4,8 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = { version = "0.16.1", features = ["shader_format_wesl"] }
-bevy-inspector-egui = "0.31.0"
+bevy = { version = "0.17.3", features = ["shader_format_wesl"] }
+bevy_render = { version = "0.17.3" }
+bevy_asset = { version = "0.17.3" }
+bevy_mesh = { version = "0.17.3" }
+bevy_camera = { version = "0.17.3" }
 wesl = { version = "0.1.2" }
 
 

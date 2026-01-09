@@ -1,11 +1,10 @@
 pub mod camera_controller;
 pub mod probe_tool;
+pub mod worldspace_ui_node;
 
 use bevy::{
     prelude::*,
-    render::{
-        view::RenderLayers,
-    },
+    camera::visibility::RenderLayers,
 };
 
 use crate::{
@@ -13,9 +12,8 @@ use crate::{
         orbit_camera_controller::{OrbitCameraController, OrbitCameraControllerPlugin},
         probe_camera_controller::ProbeCameraControllerPlugin,
     },
-        probe_tool::{events::ProbeCameraEvent, ProbeToolPlugin},
+        probe_tool::{events::ProbeCameraCommand, ProbeToolPlugin},
     };
-use bevy_inspector_egui::{bevy_egui::EguiPlugin, quick::WorldInspectorPlugin};
 
 pub struct AppPlugin;
 
@@ -27,10 +25,6 @@ impl Plugin for AppPlugin {
             ProbeCameraControllerPlugin,
             ProbeToolPlugin,
         ))
-        .add_plugins(EguiPlugin {
-            enable_multipass_for_primary_context: true,
-        })
-        .add_plugins(WorldInspectorPlugin::new())
         .add_systems(
             Startup,
             (
@@ -130,8 +124,8 @@ fn setup_cubes(
     }
 }
 
-fn setup_probe_camera(mut event_writer: EventWriter<ProbeCameraEvent>) {
-    event_writer.write(ProbeCameraEvent::Add {
+fn setup_probe_camera(mut event_writer: MessageWriter<ProbeCameraCommand>) {
+    event_writer.write(ProbeCameraCommand::Add {
         transform: Transform::from_xyz(4.0, 0.0, 0.0).looking_at(Vec3::ZERO, Vec3::Y),
         resolution: UVec2::new(1024, 1024),
     });

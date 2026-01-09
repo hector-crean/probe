@@ -1,9 +1,6 @@
 pub mod mesh_builder;
 pub mod near_plane_interaction;
-use bevy::{
-    pbr::{NotShadowCaster, NotShadowReceiver},
-    prelude::*,
-};
+use bevy::prelude::*;
 
 use crate::probe_tool::{
     KernelBindGroup, ProbeCamera,
@@ -42,11 +39,7 @@ pub fn draw_frustum(
     mut materials: ResMut<Assets<StandardMaterial>>,
     probe_query: Query<
         (Entity, &Projection, &KernelBindGroup),
-        (
-            Added<ProbeCamera>,
-            Changed<Projection>,
-            Changed<KernelBindGroup>,
-        ),
+        Added<ProbeCamera>,
     >,
 ) {
     for (probe_entity, projection, kernel_bind_group) in probe_query.iter() {
@@ -58,6 +51,11 @@ pub fn draw_frustum(
         let frustum = ProbeFrustum::new(perspective.clone());
         let mesh = meshes.add(frustum.mesh().build());
 
+        // Calculate near plane dimensions from perspective projection
+        let near = perspective.near;
+        let near_half_height = near * (perspective.fov / 2.0).tan();
+        let near_half_width = near_half_height * perspective.aspect_ratio;
+
         // Spawn frustum wireframe with marker component
         let frustum_entity = commands
             .spawn((
@@ -68,16 +66,16 @@ pub fn draw_frustum(
                     unlit: true,
                     ..default()
                 })),
-                NotShadowCaster,
-                NotShadowReceiver,
             ))
             .id();
 
-        // Spawn near plane with marker component  
+        // Spawn near plane with marker component
+        // Use -Vec3::Z normal so the plane faces towards the camera origin
+        // Position at -near on Z axis (in front of camera, which looks down -Z)
         let near_plane_entity = commands
             .spawn((
                 NearPlaneMarker,
-                Mesh3d::from(meshes.add(Plane3d::new(Vec3::Z, Vec2::new(1.0, 1.0)))),
+                Mesh3d::from(meshes.add(Plane3d::new(-Vec3::Z, Vec2::new(near_half_width, near_half_height)))),
                 MeshMaterial3d(materials.add(StandardMaterial {
                     base_color: Color::WHITE,
                     base_color_texture: Some(kernel_bind_group.source_texture.clone()),
@@ -87,8 +85,7 @@ pub fn draw_frustum(
                     cull_mode: None,
                     ..default()
                 })),
-                NotShadowCaster,
-                NotShadowReceiver,
+                Transform::from_translation(Vec3::new(0.0, 0.0, -near)),
             ))
             .id();
 
@@ -108,10 +105,10 @@ fn update_probe_visualizations(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     probe_query: Query<
-        (&Projection, &Camera, &ProbeVisualizationChildren),
+        (&Projection, &KernelBindGroup, &ProbeVisualizationChildren),
         (
             With<ProbeCamera>,
-            Or<(Changed<Projection>, Changed<Camera>)>,
+            Or<(Changed<Projection>, Changed<KernelBindGroup>)>,
         ),
     >,
     mut frustum_query: Query<&mut Mesh3d, (With<FrustumMeshMarker>, Without<NearPlaneMarker>)>,
@@ -120,7 +117,7 @@ fn update_probe_visualizations(
         (With<NearPlaneMarker>, Without<FrustumMeshMarker>),
     >,
 ) {
-    for (projection, camera, children) in &probe_query {
+    for (projection, kernel_bind_group, children) in &probe_query {
         let Projection::Perspective(perspective) = projection else {
             continue;
         };
@@ -129,9 +126,9 @@ fn update_probe_visualizations(
         let near_half_height = near * (perspective.fov / 2.0).tan();
         let near_half_width = near_half_height * perspective.aspect_ratio;
 
-        // Create new meshes
+        // Create new meshes - use -Vec3::Z so plane faces towards camera origin
         let new_near_plane_mesh = meshes.add(Plane3d::new(
-            Vec3::Z,
+            -Vec3::Z,
             Vec2::new(near_half_width, near_half_height),
         ));
 
@@ -139,7 +136,8 @@ fn update_probe_visualizations(
             ProbeFrustumMeshBuilder::from_perspective_projection(perspective);
         let new_frustum_mesh = meshes.add(frustum_mesh_builder.build());
 
-        let new_texture = camera.target.as_image().cloned();
+        // Use the source_texture from KernelBindGroup (same as the render target)
+        let new_texture = Some(kernel_bind_group.source_texture.clone());
 
         // Update frustum mesh
         if let Some(frustum_entity) = children.frustum_entity {

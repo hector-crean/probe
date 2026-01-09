@@ -36,8 +36,8 @@ impl OrbitCameraControllerPlugin {
    
     /// Simple orbit camera system that uses direct mouse input
     pub fn simple_orbit_camera_system(
-        mut mouse_motion_events: EventReader<MouseMotion>,
-        mut mouse_wheel_events: EventReader<bevy::input::mouse::MouseWheel>,
+        mut mouse_motion_events: MessageReader<MouseMotion>,
+        mut mouse_wheel_events: MessageReader<bevy::input::mouse::MouseWheel>,
         mouse_button_input: Res<ButtonInput<MouseButton>>,
         mut query: Query<(&mut OrbitCameraController, &mut Transform)>,
     ) {

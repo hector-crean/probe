@@ -1,8 +1,9 @@
 
 use bevy::{
     prelude::*,
-    render::render_asset::RenderAssetUsages,
 };
+use bevy_asset::RenderAssetUsages;
+use bevy_mesh::Indices;
 
 
 
@@ -122,7 +123,7 @@ impl MeshBuilder for ProbeFrustumMeshBuilder {
         }
 
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
-        mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+        mesh.insert_indices(Indices::U32(indices));
         mesh
     }
 }
