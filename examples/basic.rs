@@ -30,8 +30,8 @@ fn main() {
         .run();
 }
 
-#[derive(Component)]
-pub struct MainCamera;
+// NOTE: We use MainCamera from probe::prelude, not a local definition!
+// This is required for the FrustumNearPlaneInteractionPlugin to find the main camera.
 
 fn setup_main_camera(mut commands: Commands) {
     commands.spawn((

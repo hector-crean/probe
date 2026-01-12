@@ -17,7 +17,7 @@ use bevy::{
     prelude::*,
 };
 
-use crate::probe::{components::ProbeCamera, frustum::FrustumNearPlaneIntersection, pipeline::KernelBindGroup};
+use crate::{camera::MainCamera, probe::{components::ProbeCamera, frustum::FrustumNearPlaneIntersection, pipeline::KernelBindGroup}};
 
 /// Gizmo group for main camera visualization.
 #[derive(Default, Reflect, GizmoConfigGroup)]
@@ -59,10 +59,7 @@ impl Plugin for FrustumNearPlaneInteractionPlugin {
     }
 }
 
-/// Marker component for the main camera (used for interaction raycasting).
-/// Note: This should be added by the example/application code, not the library.
-#[derive(Component)]
-pub struct MainCamera;
+
 
 /// System to calculate intersection data (hover detection only, doesn't update sampling point).
 fn update_near_plane_intersection(
@@ -231,9 +228,14 @@ fn handle_near_plane_click_drag(
             if let Ok(frustum_viewport_position) =
                 frustrum_camera.world_to_viewport(frustrum_camera_transform, intersection_point)
             {
+                // Convert viewport coordinates to texture UV coordinates.
+                // Viewport: (0,0) at top-left, Y increases downward
+                // Texture:  (0,0) at top-left for render targets in Bevy/WGPU
+                // However, the render target is rendered with camera looking "into" the scene,
+                // so we need to invert Y to match the visual near plane orientation.
                 let uv = Vec2::new(
                     frustum_viewport_position.x / viewport_size.x,
-                    frustum_viewport_position.y / viewport_size.y,
+                    1.0 - (frustum_viewport_position.y / viewport_size.y),
                 );
 
                 // Update kernel sampling center

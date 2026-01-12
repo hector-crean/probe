@@ -20,4 +20,4 @@ pub use crate::probe::{
 pub use crate::ui::{KernelPopupPanel, KernelPopupPlugin, WorldspaceUiNode, WorldspaceUiNodePlugin};
 
 // Frustum interaction marker (needed for examples)
-pub use crate::probe::frustum::interaction::MainCamera;
+pub use crate::camera::MainCamera;

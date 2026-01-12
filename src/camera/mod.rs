@@ -7,6 +7,12 @@ mod probe_controller;
 pub use orbit::{OrbitCameraController, OrbitCameraControllerPlugin};
 pub use probe_controller::{ProbeCameraController, ProbeCameraControllerPlugin};
 
+
+
+#[derive(Component)]
+pub struct MainCamera;
+
+
 pub trait CameraController: Component
 where
     Self: Sized,

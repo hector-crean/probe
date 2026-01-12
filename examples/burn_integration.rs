@@ -446,7 +446,7 @@ fn setup_scene(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut event_writer: MessageWriter<ProbeCameraCommand>,
 ) {
-    // Main camera
+    // Main camera - NOTE: MainCamera marker is required for probe interaction
     commands.spawn((
         OrbitCameraController::default(),
         Camera {
@@ -455,6 +455,7 @@ fn setup_scene(
         },
         Camera3d::default(),
         Transform::from_translation(Vec3::new(0.0, 0.0, 25.0)).looking_at(Vec3::ZERO, Vec3::Y),
+        MainCamera, // Required for FrustumNearPlaneInteractionPlugin
         RenderLayers::layer(0),
     ));
 
