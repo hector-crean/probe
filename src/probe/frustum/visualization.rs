@@ -2,18 +2,21 @@
 
 use bevy::prelude::*;
 
-use crate::probe::{
-    components::ProbeCamera,
-    frustum::{
-        components::{
-            CameraAxisXMarker, CameraAxisYMarker, CameraAxisZMarker, FrustumMeshMarker,
-            NearPlaneMarker, ProbeVisualizationChildren, UpChevronMarker,
+use crate::{
+    camera::ProjectionExt,
+    probe::{
+        components::ProbeCamera,
+        frustum::{
+            components::{
+                CameraAxisXMarker, CameraAxisYMarker, CameraAxisZMarker, FrustumMeshMarker,
+                NearPlaneMarker, ProbeVisualizationChildren, UpChevronMarker,
+            },
+            mesh::{
+                CameraAxisMeshBuilder, ProbeFrustum, ProbeFrustumMeshBuilder, UpChevronMeshBuilder,
+            },
         },
-        mesh::{
-            CameraAxisMeshBuilder, ProbeFrustum, ProbeFrustumMeshBuilder, UpChevronMeshBuilder,
-        },
+        pipeline::KernelBindGroup,
     },
-    pipeline::KernelBindGroup,
 };
 
 /// System to draw the frustum for newly added probe cameras.
@@ -24,18 +27,22 @@ pub fn draw_frustum(
     probe_query: Query<(Entity, &Projection, &KernelBindGroup), Added<ProbeCamera>>,
 ) {
     for (probe_entity, projection, kernel_bind_group) in probe_query.iter() {
-        let perspective = match projection {
-            Projection::Perspective(perspective) => perspective,
-            _ => continue,
+        let Projection::Perspective(perspective) = projection else {
+            continue;
         };
 
         let frustum = ProbeFrustum::new(perspective.clone());
         let mesh = meshes.add(frustum.mesh().build());
 
-        // Calculate near plane dimensions from perspective projection
-        let near = perspective.near;
-        let near_half_height = near * (perspective.fov / 2.0).tan();
-        let near_half_width = near_half_height * perspective.aspect_ratio;
+        // Get near plane dimensions using ProjectionExt
+        let Some(near) = projection.near_distance() else {
+            continue;
+        };
+        let Some(half_extents) = projection.near_plane_half_extents() else {
+            continue;
+        };
+        let near_half_width = half_extents.x;
+        let near_half_height = half_extents.y;
 
         // Spawn frustum wireframe with marker component
         let frustum_entity = commands
@@ -57,7 +64,7 @@ pub fn draw_frustum(
             .spawn((
                 NearPlaneMarker,
                 Mesh3d::from(meshes.add(Plane3d::new(
-                    -Vec3::Z,
+                    Vec3::Z,
                     Vec2::new(near_half_width, near_half_height),
                 ))),
                 MeshMaterial3d(materials.add(StandardMaterial {
@@ -184,13 +191,19 @@ pub fn update_probe_visualizations(
             continue;
         };
 
-        let near = perspective.near;
-        let near_half_height = near * (perspective.fov / 2.0).tan();
-        let near_half_width = near_half_height * perspective.aspect_ratio;
+        // Get near plane dimensions using ProjectionExt
+        let Some(near) = projection.near_distance() else {
+            continue;
+        };
+        let Some(half_extents) = projection.near_plane_half_extents() else {
+            continue;
+        };
+        let near_half_width = half_extents.x;
+        let near_half_height = half_extents.y;
 
         // Create new meshes - use -Vec3::Z so plane faces towards camera origin
         let new_near_plane_mesh = meshes.add(Plane3d::new(
-            -Vec3::Z,
+            Vec3::Z,
             Vec2::new(near_half_width, near_half_height),
         ));
 

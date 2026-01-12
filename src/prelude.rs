@@ -3,10 +3,10 @@
 //! This prelude re-exports the most commonly used types and plugins
 //! to make it easy to get started with the probe system.
 
-// Camera controllers
+// Camera controllers and extensions
 pub use crate::camera::{
-    OrbitCameraController, OrbitCameraControllerPlugin, ProbeCameraController,
-    ProbeCameraControllerPlugin,
+    CameraExt, OrbitCameraController, OrbitCameraControllerPlugin, ProbeCameraController,
+    ProbeCameraControllerPlugin, ProjectionExt,
 };
 
 // Probe system

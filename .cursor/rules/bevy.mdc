@@ -1,0 +1,278 @@
+---
+description: Best practices for Bevy ECS game engine projects
+globs: ["**/*.rs"]
+alwaysApply: false
+---
+
+# Bevy ECS Best Practices
+
+## Control Flow
+
+### Prefer `match` over nested `if/else`
+Match statements make branches explicit and exhaustive. Use `let-else` for early returns.
+
+```rust
+// ❌ Avoid nested if/else
+if let Some(x) = foo {
+    if let Some(y) = bar {
+        // deeply nested
+    } else {
+        return;
+    }
+} else {
+    return;
+}
+
+// ✅ Prefer let-else for early returns
+let Some(x) = foo else { return; };
+let Some(y) = bar else { return; };
+// flat code continues
+
+// ✅ Use match for multiple branches
+match (drag_state.is_dragging, intersection.point) {
+    (true, Some(point)) => handle_drag(point),
+    (false, Some(point)) => handle_hover(point),
+    (_, None) => clear_state(),
+}
+```
+
+### Reset state with Default trait
+When clearing multiple fields, prefer `Default::default()` or struct update syntax:
+
+```rust
+// ❌ Verbose field-by-field clearing
+intersection.point = None;
+intersection.ray = None;
+intersection.is_within_bounds = false;
+
+// ✅ Use Default for clean resets
+*intersection = FrustumNearPlaneIntersection::default();
+```
+
+## Systems & Scheduling
+
+### Prefer focused systems with run conditions
+Small systems with `run_if` conditions are more efficient than large systems with internal branching.
+
+```rust
+// ✅ Skip entire system when preconditions not met
+.add_systems(
+    Update,
+    (
+        handle_intersection.run_if(any_with_component::<ProbeCamera>),
+        handle_drag.run_if(resource_changed::<NearPlaneDragState>),
+        draw_visualization.run_if(in_state(ProbeToolState::Probing)),
+    )
+        .chain(),
+)
+```
+
+### Use SystemSets for ordering
+Group related systems and define ordering at the set level:
+
+```rust
+#[derive(SystemSet, Clone, Debug, Hash, PartialEq, Eq)]
+pub enum ProbeSystemSet {
+    Input,
+    Processing,
+    Visualization,
+}
+
+app.configure_sets(Update, (
+    ProbeSystemSet::Input,
+    ProbeSystemSet::Processing.after(ProbeSystemSet::Input),
+    ProbeSystemSet::Visualization.after(ProbeSystemSet::Processing),
+));
+```
+
+## Events & Messages
+
+### Always drain EventReaders
+Events not read will accumulate. Drain every frame, even conditionally:
+
+```rust
+// ✅ Always read events
+fn handle_commands(mut events: EventReader<Command>) {
+    for event in events.read() {
+        match event {
+            Command::Add { .. } => { /* handle */ }
+            Command::Remove { .. } => { /* handle */ }
+        }
+    }
+}
+```
+
+### Use enum variants for related commands
+Group related operations in a single event type:
+
+```rust
+// ✅ Related commands in one enum
+#[derive(Event)]
+pub enum ProbeCameraCommand {
+    Add { transform: Transform, resolution: UVec2 },
+    Remove { entity: Entity },
+    UpdateSettings { entity: Entity, settings: KernelSettings },
+}
+```
+
+### Separate input from output events
+Commands flow in, notifications flow out:
+
+```rust
+// Input commands
+pub enum ProbeCameraCommand { Add { .. }, Remove { .. } }
+
+// Output notifications  
+pub enum ProbeCameraOutput { KernelChanged { .. }, CameraSpawned { .. } }
+```
+
+## Observers vs Events
+
+### Use Observers for entity-scoped reactions
+Observers trigger on specific entities; events broadcast globally:
+
+```rust
+// ✅ Observer - entity-targeted
+fn on_readback_complete(
+    trigger: On<ReadbackComplete>,
+    query: Query<&ProbeConfig>,
+) {
+    let entity = trigger.entity;
+    let Ok(config) = query.get(entity) else { return };
+    // React to this specific entity
+}
+
+// ✅ Event - broadcast communication
+fn handle_commands(mut events: EventReader<Command>) {
+    // React to any matching command
+}
+```
+
+| Pattern | Use For |
+|---------|---------|
+| Observer (`On<T>`) | Entity lifecycle, GPU callbacks, component reactions |
+| Events | Commands, user input routing, cross-system communication |
+| `Changed<T>` | Reacting to component value changes |
+
+## Components & Markers
+
+### Use marker components for query filtering
+Markers enable efficient query filtering and run conditions:
+
+```rust
+// ✅ Marker enables targeted queries
+#[derive(Component)]
+pub struct ProbeCamera;
+
+// Query only probe cameras
+Query<&Transform, With<ProbeCamera>>
+
+// Run condition
+.run_if(any_with_component::<ProbeCamera>)
+```
+
+### Use `#[require(...)]` for component dependencies
+Auto-attach related components:
+
+```rust
+#[derive(Component)]
+#[require(Camera, Camera3d, Transform)]
+pub struct ProbeCamera {
+    pub resolution: UVec2,
+}
+```
+
+### Avoid redundant markers
+Don't create markers that duplicate queryable state:
+
+```rust
+// ❌ Redundant - the component itself is the marker
+#[derive(Component)]
+struct HasKernelBindGroup;
+
+// ✅ Just query for the component
+Query<Entity, With<KernelBindGroup>>
+```
+
+## Queries
+
+### Use `Single<>` for guaranteed single-entity queries
+When exactly one entity should match:
+
+```rust
+// ✅ Clearer intent, better error messages
+fn system(window: Single<&Window>, camera: Single<&Camera, With<MainCamera>>) {
+    // Guaranteed single entity
+}
+```
+
+### Define QueryData for complex repeated queries
+Reduce boilerplate and improve consistency:
+
+```rust
+#[derive(QueryData)]
+#[query_data(mutable)]
+pub struct ProbeCameraQuery {
+    pub entity: Entity,
+    pub transform: &'static mut Transform,
+    pub camera: &'static Camera,
+    pub projection: &'static Projection,
+}
+
+fn system(mut query: Query<ProbeCameraQuery>) {
+    for probe in query.iter_mut() {
+        // Access probe.entity, probe.transform, etc.
+    }
+}
+```
+
+### Filter with `With<>`/`Without<>` over runtime checks
+Let the ECS do the filtering:
+
+```rust
+// ❌ Runtime filtering
+fn system(query: Query<(&Transform, Option<&ProbeCamera>)>) {
+    for (transform, probe) in query.iter() {
+        if probe.is_some() { /* ... */ }
+    }
+}
+
+// ✅ Query-level filtering
+fn system(query: Query<&Transform, With<ProbeCamera>>) {
+    for transform in query.iter() {
+        // Only probe cameras
+    }
+}
+```
+
+## Change Detection
+
+### Use `Changed<T>` for mutation reactions
+Only run when component actually changed:
+
+```rust
+fn on_settings_changed(
+    query: Query<(&KernelSettings, &mut Pipeline), Changed<KernelSettings>>,
+) {
+    for (settings, mut pipeline) in query.iter_mut() {
+        pipeline.rebuild(settings);
+    }
+}
+```
+
+### Cache expensive computations
+Store derived data in components rather than recomputing:
+
+```rust
+#[derive(Component)]
+pub struct CachedFrustumCorners {
+    pub corners: [Vec3; 8],
+    pub last_computed: f32,  // time
+}
+
+fn update_cache(
+    mut query: Query<(&Projection, &mut CachedFrustumCorners), Changed<Projection>>,
+) {
+    // Only recompute when projection changes
+}
+```

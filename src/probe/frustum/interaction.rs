@@ -7,7 +7,8 @@
 //!
 //! Controls:
 //! - Click and drag on the near plane to set/update the sampling point
-//! - The sampling point is shown with a red sphere and crosshair
+//! - The sampling point is shown with a green crosshair and probe ray
+//! - Hover point shown with red indicator when different from locked point
 //! - Out-of-bounds hover is shown with a faded indicator
 
 use bevy::{
@@ -17,7 +18,16 @@ use bevy::{
     prelude::*,
 };
 
-use crate::{camera::MainCamera, probe::{components::ProbeCamera, frustum::FrustumNearPlaneIntersection, pipeline::KernelBindGroup}};
+use crate::{
+    camera::{CameraExt, MainCamera},
+    probe::{
+        components::ProbeCamera, frustum::FrustumNearPlaneIntersection, pipeline::KernelBindGroup,
+    },
+};
+
+// =============================================================================
+// Components & Resources
+// =============================================================================
 
 /// Gizmo group for main camera visualization.
 #[derive(Default, Reflect, GizmoConfigGroup)]
@@ -28,19 +38,45 @@ pub struct MainCameraGizmos;
 pub struct NearPlaneDragState {
     /// Whether the user is currently dragging on the near plane.
     pub is_dragging: bool,
-    /// The last valid sampling point (persists after drag ends).
-    pub locked_point: Option<Vec3>,
-    /// Normalized UV coordinates of the locked sampling point.
+    /// Normalized UV coordinates [0,1] of the sampling point on the near plane.
+    /// The world position is computed from this each frame.
     pub locked_uv: Option<Vec2>,
 }
 
+/// Mouse button state for drag handling.
+#[derive(Clone, Copy)]
+enum DragEvent {
+    /// Left mouse just pressed while within bounds
+    Started,
+    /// Left mouse just released
+    Ended,
+    /// Actively dragging with left mouse held
+    Dragging,
+    /// No drag activity
+    Idle,
+}
+
+impl DragEvent {
+    fn from_input(mouse: &ButtonInput<MouseButton>, is_within_bounds: bool) -> Self {
+        let pressed = mouse.pressed(MouseButton::Left);
+        let just_pressed = mouse.just_pressed(MouseButton::Left);
+        let just_released = mouse.just_released(MouseButton::Left);
+
+        match (just_pressed, just_released, pressed, is_within_bounds) {
+            (true, _, _, true) => DragEvent::Started,
+            (_, true, _, _) => DragEvent::Ended,
+            (_, _, true, _) => DragEvent::Dragging,
+            _ => DragEvent::Idle,
+        }
+    }
+}
+
+// =============================================================================
+// Plugin
+// =============================================================================
+
 /// Plugin for near plane interaction.
 pub struct FrustumNearPlaneInteractionPlugin;
-
-fn setup_main_camera_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
-    let (_config, _) = config_store.config_mut::<MainCameraGizmos>();
-    // Gizmos configuration - can be customized if needed
-}
 
 impl Plugin for FrustumNearPlaneInteractionPlugin {
     fn build(&self, app: &mut App) {
@@ -54,17 +90,25 @@ impl Plugin for FrustumNearPlaneInteractionPlugin {
                     handle_near_plane_click_drag,
                     draw_near_plane_visualization,
                 )
-                    .chain(),
+                    .chain()
+                    .run_if(any_with_component::<ProbeCamera>),
             );
     }
 }
 
+fn setup_main_camera_gizmos(mut config_store: ResMut<GizmoConfigStore>) {
+    let (_config, _) = config_store.config_mut::<MainCameraGizmos>();
+    // Gizmos configuration - can be customized if needed
+}
 
+// =============================================================================
+// Systems
+// =============================================================================
 
 /// System to calculate intersection data (hover detection only, doesn't update sampling point).
 fn update_near_plane_intersection(
     window: Single<&Window>,
-    mut frustrum_camera_query: Query<
+    mut probe_camera_query: Query<
         (
             &Camera,
             &GlobalTransform,
@@ -73,113 +117,60 @@ fn update_near_plane_intersection(
         ),
         (With<ProbeCamera>, Without<MainCamera>),
     >,
-    main_camera_query: Query<
-        (&Camera, &GlobalTransform, &Projection),
-        (With<MainCamera>, Without<ProbeCamera>),
-    >,
+    main_camera_query: Query<(&Camera, &GlobalTransform), (With<MainCamera>, Without<ProbeCamera>)>,
 ) {
-    let Ok((main_camera, main_camera_transform, _main_projection)) = main_camera_query.single()
+    // Early return with let-else for required entities
+    let Ok((main_camera, main_camera_transform)) = main_camera_query.single() else {
+        return;
+    };
+
+    let Ok((probe_camera, probe_transform, mut intersection, projection)) =
+        probe_camera_query.single_mut()
     else {
         return;
     };
 
-    let Ok((
-        frustrum_camera,
-        frustrum_camera_transform,
-        mut frustrum_intersection,
-        frustrum_projection,
-    )) = frustrum_camera_query.single_mut()
-    else {
-        return;
-    };
-
-    // Get cursor position
+    // Get cursor position - reset state if no cursor
     let Some(cursor_position) = window.cursor_position() else {
-        frustrum_intersection.point = None;
-        frustrum_intersection.ray = None;
-        frustrum_intersection.is_within_bounds = false;
-        frustrum_intersection.intersection_world_point = None;
+        *intersection = FrustumNearPlaneIntersection::default();
         return;
     };
 
     // Convert cursor position to world ray
-    let Ok(main_camera_ray) = main_camera.viewport_to_world(main_camera_transform, cursor_position)
+    let Ok(camera_ray) = main_camera.viewport_to_world(main_camera_transform, cursor_position)
     else {
-        frustrum_intersection.point = None;
-        frustrum_intersection.ray = None;
-        frustrum_intersection.is_within_bounds = false;
-        frustrum_intersection.intersection_world_point = None;
+        *intersection = FrustumNearPlaneIntersection::default();
         return;
     };
 
-    // Calculate the near plane
-    let frustum_camera_forward = frustrum_camera_transform.forward();
-    let near_distance = match frustrum_projection {
-        Projection::Perspective(proj) => proj.near,
-        Projection::Orthographic(proj) => proj.near,
-        _ => 0.0,
+    // Get near plane center using CameraExt
+    let Some(near_plane_center) = probe_camera.near_plane_center(probe_transform, projection)
+    else {
+        *intersection = FrustumNearPlaneIntersection::default();
+        return;
     };
 
-    let near_plane_center =
-        frustrum_camera_transform.translation() + frustum_camera_forward * near_distance;
-    let near_plane = InfinitePlane3d::new(frustum_camera_forward.as_vec3());
+    // Calculate plane intersection
+    let plane_normal = probe_transform.forward();
+    let near_plane = InfinitePlane3d::new(plane_normal.as_vec3());
 
-    // Calculate intersection with near plane
-    if let Some(distance) = main_camera_ray.intersect_plane(near_plane_center, near_plane) {
-        let intersection_point = main_camera_ray.get_point(distance);
-        frustrum_intersection.intersection_world_point = Some(intersection_point);
+    // Use match for the intersection result - clearer than if-else
+    match camera_ray.intersect_plane(near_plane_center, near_plane) {
+        Some(distance) => {
+            let point = camera_ray.get_point(distance);
+            let is_within_bounds =
+                probe_camera.is_within_near_plane_bounds(probe_transform, projection, point);
 
-        // Check if intersection point is within the finite near plane bounds
-        let viewport_size = frustrum_camera
-            .logical_viewport_size()
-            .unwrap_or(Vec2::new(800.0, 600.0));
-        let aspect_ratio = viewport_size.x / viewport_size.y;
-
-        let is_within_bounds = match frustrum_projection {
-            Projection::Perspective(proj) => {
-                // Calculate near plane dimensions for perspective projection
-                let half_height = near_distance * (proj.fov * 0.5).tan();
-                let half_width = half_height * aspect_ratio;
-
-                // Convert world intersection point to camera-local coordinates
-                let camera_to_intersection =
-                    intersection_point - frustrum_camera_transform.translation();
-                let local_right = frustrum_camera_transform.right().dot(camera_to_intersection);
-                let local_up = frustrum_camera_transform.up().dot(camera_to_intersection);
-
-                // Check bounds
-                local_right.abs() <= half_width && local_up.abs() <= half_height
-            }
-            Projection::Orthographic(proj) => {
-                // For orthographic projection, use scale with aspect ratio
-                let half_height = proj.scale * 0.5;
-                let half_width = half_height * aspect_ratio;
-
-                // Convert world intersection point to camera-local coordinates
-                let camera_to_intersection =
-                    intersection_point - frustrum_camera_transform.translation();
-                let local_right = frustrum_camera_transform.right().dot(camera_to_intersection);
-                let local_up = frustrum_camera_transform.up().dot(camera_to_intersection);
-
-                // Check bounds
-                local_right.abs() <= half_width && local_up.abs() <= half_height
-            }
-            _ => true, // Default to true for other projection types
-        };
-
-        frustrum_intersection.is_within_bounds = is_within_bounds;
-        frustrum_intersection.ray = Some(main_camera_ray);
-
-        if is_within_bounds {
-            frustrum_intersection.point = Some(intersection_point);
-        } else {
-            frustrum_intersection.point = None;
+            *intersection = FrustumNearPlaneIntersection {
+                point: is_within_bounds.then_some(point),
+                ray: Some(camera_ray),
+                is_within_bounds,
+                intersection_world_point: Some(point),
+            };
         }
-    } else {
-        frustrum_intersection.point = None;
-        frustrum_intersection.ray = None;
-        frustrum_intersection.is_within_bounds = false;
-        frustrum_intersection.intersection_world_point = None;
+        None => {
+            *intersection = FrustumNearPlaneIntersection::default();
+        }
     }
 }
 
@@ -188,64 +179,43 @@ fn update_near_plane_intersection(
 fn handle_near_plane_click_drag(
     mouse_button: Res<ButtonInput<MouseButton>>,
     mut drag_state: ResMut<NearPlaneDragState>,
-    mut frustrum_camera_query: Query<
+    mut probe_camera_query: Query<
         (
             &Camera,
             &GlobalTransform,
+            &Projection,
             &FrustumNearPlaneIntersection,
             &mut KernelBindGroup,
         ),
         With<ProbeCamera>,
     >,
 ) {
-    let Ok((frustrum_camera, frustrum_camera_transform, frustrum_intersection, mut kernel_bind_group)) =
-        frustrum_camera_query.single_mut()
+    let Ok((camera, transform, projection, intersection, mut kernel_bind_group)) =
+        probe_camera_query.single_mut()
     else {
         return;
     };
 
-    let left_pressed = mouse_button.pressed(MouseButton::Left);
-    let left_just_pressed = mouse_button.just_pressed(MouseButton::Left);
-    let left_just_released = mouse_button.just_released(MouseButton::Left);
+    let drag_event = DragEvent::from_input(&mouse_button, intersection.is_within_bounds);
 
-    // Handle drag start
-    if left_just_pressed && frustrum_intersection.is_within_bounds {
-        drag_state.is_dragging = true;
-    }
-
-    // Handle drag end
-    if left_just_released {
-        drag_state.is_dragging = false;
-    }
-
-    // Update sampling point while dragging (or on click)
-    if drag_state.is_dragging && left_pressed {
-        if let Some(intersection_point) = frustrum_intersection.point {
-            let viewport_size = frustrum_camera
-                .logical_viewport_size()
-                .unwrap_or(Vec2::new(800.0, 600.0));
-
-            if let Ok(frustum_viewport_position) =
-                frustrum_camera.world_to_viewport(frustrum_camera_transform, intersection_point)
-            {
-                // Convert viewport coordinates to texture UV coordinates.
-                // Viewport: (0,0) at top-left, Y increases downward
-                // Texture:  (0,0) at top-left for render targets in Bevy/WGPU
-                // However, the render target is rendered with camera looking "into" the scene,
-                // so we need to invert Y to match the visual near plane orientation.
-                let uv = Vec2::new(
-                    frustum_viewport_position.x / viewport_size.x,
-                    1.0 - (frustum_viewport_position.y / viewport_size.y),
-                );
-
-                // Update kernel sampling center
-                kernel_bind_group.settings.center_coords = uv;
-
-                // Store the locked point for visualization
-                drag_state.locked_point = Some(intersection_point);
-                drag_state.locked_uv = Some(uv);
+    // Handle drag state transitions with match
+    match drag_event {
+        DragEvent::Started => {
+            drag_state.is_dragging = true;
+        }
+        DragEvent::Ended => {
+            drag_state.is_dragging = false;
+        }
+        DragEvent::Dragging if drag_state.is_dragging => {
+            // Update sampling point while dragging
+            if let Some(point) = intersection.point {
+                if let Some(uv) = camera.world_to_near_plane_uv(transform, projection, point) {
+                    kernel_bind_group.settings.center_coords = uv;
+                    drag_state.locked_uv = Some(uv);
+                }
             }
         }
+        DragEvent::Dragging | DragEvent::Idle => {}
     }
 }
 
@@ -253,95 +223,178 @@ fn handle_near_plane_click_drag(
 fn draw_near_plane_visualization(
     mut gizmos: Gizmos<MainCameraGizmos>,
     drag_state: Res<NearPlaneDragState>,
-    frustrum_camera_query: Query<
-        (&Camera, &GlobalTransform, &FrustumNearPlaneIntersection),
+    probe_camera_query: Query<
+        (
+            &Camera,
+            &GlobalTransform,
+            &Projection,
+            &FrustumNearPlaneIntersection,
+        ),
         With<ProbeCamera>,
     >,
 ) {
-    let Ok((frustrum_camera, frustrum_camera_transform, frustrum_intersection)) =
-        frustrum_camera_query.single()
-    else {
+    let Ok((camera, transform, projection, intersection)) = probe_camera_query.single() else {
         return;
     };
 
-    // Draw the locked sampling point (from click/drag) - this is the active sampling point
-    if let Some(locked_point) = drag_state.locked_point {
-        // Main sampling point sphere (green to indicate it's the active point)
-        gizmos.sphere(locked_point, 0.06, GREEN);
+    // Get near plane dimensions for proportional sizing
+    let (near, _, half_height) = camera
+        .near_plane_dimensions(projection)
+        .unwrap_or((1.0, 0.5, 0.5));
 
-        // Line from camera to sampling point
-        gizmos.line(
-            frustrum_camera_transform.translation(),
-            locked_point,
-            GREEN,
+    // Draw locked sampling point if set
+    if let Some(uv) = drag_state.locked_uv {
+        draw_locked_point(
+            &mut gizmos,
+            camera,
+            transform,
+            projection,
+            uv,
+            near,
+            half_height,
         );
-
-        // Draw a crosshair at the sampling point
-        let cross_size = 0.12;
-        let camera_right = frustrum_camera_transform.right() * cross_size;
-        let camera_up = frustrum_camera_transform.up() * cross_size;
-
-        gizmos.line(
-            locked_point - camera_right,
-            locked_point + camera_right,
-            GREEN,
-        );
-        gizmos.line(locked_point - camera_up, locked_point + camera_up, GREEN);
-
-        // Draw the probe ray from sampling point into the scene
-        if let Ok(frustum_viewport_position) =
-            frustrum_camera.world_to_viewport(frustrum_camera_transform, locked_point)
-        {
-            if let Ok(frustum_camera_ray) = frustrum_camera
-                .viewport_to_world(frustrum_camera_transform, frustum_viewport_position)
-            {
-                gizmos.line(
-                    locked_point,
-                    locked_point + frustum_camera_ray.direction * 10.0,
-                    Color::srgba(0.0, 1.0, 0.0, 0.7),
-                );
-            }
-        }
     }
 
-    // Draw the current hover point (different from locked point)
-    if let Some(hover_point) = frustrum_intersection.point {
-        // Only draw hover indicator if it's different from the locked point
-        let should_draw_hover = drag_state
-            .locked_point
-            .map(|locked| hover_point.distance(locked) > 0.01)
-            .unwrap_or(true);
-
-        if should_draw_hover {
-            // Hover point sphere (red, smaller)
-            gizmos.sphere(hover_point, 0.04, RED);
-
-            // Small cross at hover point
-            let cross_size = 0.08;
-            let camera_right = frustrum_camera_transform.right() * cross_size;
-            let camera_up = frustrum_camera_transform.up() * cross_size;
-
-            gizmos.line(hover_point - camera_right, hover_point + camera_right, RED);
-            gizmos.line(hover_point - camera_up, hover_point + camera_up, RED);
-        }
-    }
-
-    // Draw out-of-bounds hover with faded visualization
-    if !frustrum_intersection.is_within_bounds {
-        if let Some(intersection_point) = frustrum_intersection.intersection_world_point {
-            gizmos.sphere(intersection_point, 0.02, Color::srgba(1.0, 0.5, 0.5, 0.3));
-        }
-    }
+    // Draw hover visualization based on state
+    draw_hover_visualization(
+        &mut gizmos,
+        camera,
+        transform,
+        projection,
+        intersection,
+        &drag_state,
+        half_height,
+    );
 
     // Draw drag indicator when actively dragging
     if drag_state.is_dragging {
-        if let Some(point) = frustrum_intersection.point {
-            // Animated ring around the drag point
-            // Create an isometry (position + rotation) for the circle
-            let rotation =
-                Quat::from_rotation_arc(Vec3::Z, frustrum_camera_transform.forward().as_vec3());
-            let isometry = Isometry3d::new(point, rotation);
-            gizmos.circle(isometry, 0.15, YELLOW);
+        if let Some(point) = intersection.point {
+            draw_drag_indicator(&mut gizmos, transform, point, half_height);
         }
     }
+}
+
+// =============================================================================
+// Visualization Helpers
+// =============================================================================
+
+/// Draws the locked sampling point with crosshair and probe ray.
+fn draw_locked_point(
+    gizmos: &mut Gizmos<MainCameraGizmos>,
+    camera: &Camera,
+    transform: &GlobalTransform,
+    projection: &Projection,
+    uv: Vec2,
+    near: f32,
+    half_height: f32,
+) {
+    // Compute world position from UV + current transform (moves with frustum)
+    let Some(world_point) = camera.uv_to_near_plane_world(transform, projection, uv) else {
+        return;
+    };
+
+    // Line from camera origin to sampling point on near plane
+    gizmos.line(transform.translation(), world_point, GREEN);
+
+    // Draw 2D cross flat on the near plane (proportional to near plane size)
+    let cross_size = half_height * 0.1;
+    let right = transform.right() * cross_size;
+    let up = transform.up() * cross_size;
+
+    gizmos.line(world_point - right, world_point + right, GREEN);
+    gizmos.line(world_point - up, world_point + up, GREEN);
+
+    // Draw the probe ray from sampling point into the scene
+    let forward = transform.forward();
+    let ray_length = near * 5.0;
+    gizmos.line(
+        world_point,
+        world_point + forward * ray_length,
+        Color::srgba(0.0, 1.0, 0.0, 0.7),
+    );
+}
+
+/// Draws hover visualization based on current state.
+fn draw_hover_visualization(
+    gizmos: &mut Gizmos<MainCameraGizmos>,
+    camera: &Camera,
+    transform: &GlobalTransform,
+    projection: &Projection,
+    intersection: &FrustumNearPlaneIntersection,
+    drag_state: &NearPlaneDragState,
+    half_height: f32,
+) {
+    // Determine what hover visualization to show using match
+    match (
+        intersection.is_within_bounds,
+        intersection.point,
+        intersection.intersection_world_point,
+    ) {
+        // Within bounds - show hover point if different from locked
+        (true, Some(hover_point), _) => {
+            let should_draw =
+                should_draw_hover_point(camera, transform, projection, drag_state, hover_point);
+
+            if should_draw {
+                draw_hover_point(gizmos, transform, hover_point, half_height);
+            }
+        }
+        // Out of bounds - show faded indicator
+        (false, _, Some(out_of_bounds_point)) => {
+            gizmos.sphere(
+                out_of_bounds_point,
+                half_height * 0.02,
+                Color::srgba(1.0, 0.5, 0.5, 0.3),
+            );
+        }
+        // No intersection - nothing to draw
+        _ => {}
+    }
+}
+
+/// Determines if hover point should be drawn (different from locked point).
+fn should_draw_hover_point(
+    camera: &Camera,
+    transform: &GlobalTransform,
+    projection: &Projection,
+    drag_state: &NearPlaneDragState,
+    hover_point: Vec3,
+) -> bool {
+    match drag_state.locked_uv {
+        None => true,
+        Some(uv) => camera
+            .uv_to_near_plane_world(transform, projection, uv)
+            .map_or(true, |locked| hover_point.distance(locked) > 0.01),
+    }
+}
+
+/// Draws the hover point indicator.
+fn draw_hover_point(
+    gizmos: &mut Gizmos<MainCameraGizmos>,
+    transform: &GlobalTransform,
+    point: Vec3,
+    half_height: f32,
+) {
+    // Hover point sphere (red, smaller)
+    gizmos.sphere(point, half_height * 0.04, RED);
+
+    // Small cross at hover point (proportional to near plane)
+    let cross_size = half_height * 0.08;
+    let right = transform.right() * cross_size;
+    let up = transform.up() * cross_size;
+
+    gizmos.line(point - right, point + right, RED);
+    gizmos.line(point - up, point + up, RED);
+}
+
+/// Draws the drag indicator ring.
+fn draw_drag_indicator(
+    gizmos: &mut Gizmos<MainCameraGizmos>,
+    transform: &GlobalTransform,
+    point: Vec3,
+    half_height: f32,
+) {
+    let rotation = Quat::from_rotation_arc(Vec3::Z, transform.forward().as_vec3());
+    let isometry = Isometry3d::new(point, rotation);
+    gizmos.circle(isometry, half_height * 0.15, YELLOW);
 }
