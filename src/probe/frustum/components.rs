@@ -10,11 +10,35 @@ pub struct FrustumMeshMarker;
 #[derive(Component)]
 pub struct NearPlaneMarker;
 
+/// Marker component for camera axes entities (X axis).
+#[derive(Component)]
+pub struct CameraAxisXMarker;
+
+/// Marker component for camera axes entities (Y axis).
+#[derive(Component)]
+pub struct CameraAxisYMarker;
+
+/// Marker component for camera axes entities (Z axis).
+#[derive(Component)]
+pub struct CameraAxisZMarker;
+
+/// Marker component for up direction chevron on near plane.
+#[derive(Component)]
+pub struct UpChevronMarker;
+
+#[derive(Component)]
+
+pub struct CameraCrosshair;
+
 /// Component that stores references to child entities for easy management.
 #[derive(Component, Default)]
 pub struct ProbeVisualizationChildren {
     pub frustum_entity: Option<Entity>,
     pub near_plane_entity: Option<Entity>,
+    pub axis_x_entity: Option<Entity>,
+    pub axis_y_entity: Option<Entity>,
+    pub axis_z_entity: Option<Entity>,
+    pub up_chevron_entity: Option<Entity>,
 }
 
 /// Component to store the near plane intersection point.

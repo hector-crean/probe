@@ -6,10 +6,13 @@ mod mesh;
 mod visualization;
 
 pub use components::{
-    FrustumMeshMarker, FrustumNearPlaneIntersection, NearPlaneMarker, ProbeVisualizationChildren,
+    CameraAxisXMarker, CameraAxisYMarker, CameraAxisZMarker, FrustumMeshMarker,
+    FrustumNearPlaneIntersection, NearPlaneMarker, ProbeVisualizationChildren, UpChevronMarker,
 };
 pub use interaction::NearPlaneDragState;
-pub use mesh::{ProbeFrustum, ProbeFrustumMeshBuilder};
+pub use mesh::{
+    CameraAxisMeshBuilder, ProbeFrustum, ProbeFrustumMeshBuilder, UpChevronMeshBuilder,
+};
 
 use bevy::prelude::*;
 

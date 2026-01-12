@@ -5,8 +5,13 @@ use bevy::prelude::*;
 use crate::probe::{
     components::ProbeCamera,
     frustum::{
-        components::{FrustumMeshMarker, NearPlaneMarker, ProbeVisualizationChildren},
-        mesh::{ProbeFrustum, ProbeFrustumMeshBuilder},
+        components::{
+            CameraAxisXMarker, CameraAxisYMarker, CameraAxisZMarker, FrustumMeshMarker,
+            NearPlaneMarker, ProbeVisualizationChildren, UpChevronMarker,
+        },
+        mesh::{
+            CameraAxisMeshBuilder, ProbeFrustum, ProbeFrustumMeshBuilder, UpChevronMeshBuilder,
+        },
     },
     pipeline::KernelBindGroup,
 };
@@ -51,9 +56,10 @@ pub fn draw_frustum(
         let near_plane_entity = commands
             .spawn((
                 NearPlaneMarker,
-                Mesh3d::from(
-                    meshes.add(Plane3d::new(-Vec3::Z, Vec2::new(near_half_width, near_half_height))),
-                ),
+                Mesh3d::from(meshes.add(Plane3d::new(
+                    -Vec3::Z,
+                    Vec2::new(near_half_width, near_half_height),
+                ))),
                 MeshMaterial3d(materials.add(StandardMaterial {
                     base_color: Color::WHITE,
                     base_color_texture: Some(kernel_bind_group.source_texture.clone()),
@@ -67,15 +73,80 @@ pub fn draw_frustum(
             ))
             .id();
 
+        // Spawn camera axes at origin (X=red, Y=green, Z=blue)
+        const AXIS_LENGTH: f32 = 0.4;
+        let axis_x_entity = commands
+            .spawn((
+                CameraAxisXMarker,
+                Mesh3d::from(meshes.add(CameraAxisMeshBuilder::x_axis(AXIS_LENGTH).build())),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(1.0, 0.0, 0.0), // RED
+                    unlit: true,
+                    ..default()
+                })),
+                Transform::IDENTITY,
+            ))
+            .id();
+
+        let axis_y_entity = commands
+            .spawn((
+                CameraAxisYMarker,
+                Mesh3d::from(meshes.add(CameraAxisMeshBuilder::y_axis(AXIS_LENGTH).build())),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.0, 1.0, 0.0), // GREEN
+                    unlit: true,
+                    ..default()
+                })),
+                Transform::IDENTITY,
+            ))
+            .id();
+
+        let axis_z_entity = commands
+            .spawn((
+                CameraAxisZMarker,
+                Mesh3d::from(meshes.add(CameraAxisMeshBuilder::z_axis(AXIS_LENGTH).build())),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.0, 0.0, 1.0), // BLUE
+                    unlit: true,
+                    ..default()
+                })),
+                Transform::IDENTITY,
+            ))
+            .id();
+
+        // Spawn up direction chevron on near plane
+        let chevron_mesh = meshes
+            .add(UpChevronMeshBuilder::from_near_plane(near_half_width, near_half_height).build());
+        let up_chevron_entity = commands
+            .spawn((
+                UpChevronMarker,
+                Mesh3d::from(chevron_mesh),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgb(0.0, 1.0, 0.0), // GREEN to match up axis
+                    unlit: true,
+                    ..default()
+                })),
+                Transform::from_translation(Vec3::new(0.0, 0.0, -near)),
+            ))
+            .id();
+
         // Add children and store references
         commands
             .entity(probe_entity)
             .insert(ProbeVisualizationChildren {
                 frustum_entity: Some(frustum_entity),
                 near_plane_entity: Some(near_plane_entity),
+                axis_x_entity: Some(axis_x_entity),
+                axis_y_entity: Some(axis_y_entity),
+                axis_z_entity: Some(axis_z_entity),
+                up_chevron_entity: Some(up_chevron_entity),
             })
             .add_child(frustum_entity)
-            .add_child(near_plane_entity);
+            .add_child(near_plane_entity)
+            .add_child(axis_x_entity)
+            .add_child(axis_y_entity)
+            .add_child(axis_z_entity)
+            .add_child(up_chevron_entity);
     }
 }
 
@@ -99,6 +170,14 @@ pub fn update_probe_visualizations(
         ),
         (With<NearPlaneMarker>, Without<FrustumMeshMarker>),
     >,
+    mut chevron_query: Query<
+        (&mut Mesh3d, &mut Transform),
+        (
+            With<UpChevronMarker>,
+            Without<NearPlaneMarker>,
+            Without<FrustumMeshMarker>,
+        ),
+    >,
 ) {
     for (projection, kernel_bind_group, children) in &probe_query {
         let Projection::Perspective(perspective) = projection else {
@@ -115,7 +194,8 @@ pub fn update_probe_visualizations(
             Vec2::new(near_half_width, near_half_height),
         ));
 
-        let frustum_mesh_builder = ProbeFrustumMeshBuilder::from_perspective_projection(perspective);
+        let frustum_mesh_builder =
+            ProbeFrustumMeshBuilder::from_perspective_projection(perspective);
         let new_frustum_mesh = meshes.add(frustum_mesh_builder.build());
 
         // Use the source_texture from KernelBindGroup (same as the render target)
@@ -143,5 +223,20 @@ pub fn update_probe_visualizations(
                 }
             }
         }
+
+        // Update up chevron mesh and transform (position changes with near plane dimensions)
+        if let Some(chevron_entity) = children.up_chevron_entity {
+            if let Ok((mut mesh_handle, mut transform)) = chevron_query.get_mut(chevron_entity) {
+                let new_chevron_mesh = meshes.add(
+                    UpChevronMeshBuilder::from_near_plane(near_half_width, near_half_height)
+                        .build(),
+                );
+                *mesh_handle = Mesh3d::from(new_chevron_mesh);
+                transform.translation = Vec3::new(0.0, 0.0, -near);
+            }
+        }
+
+        // Axes don't need updating - their geometry is fixed and they're at the origin
+        // (Transform::IDENTITY), so they automatically follow the camera transform via parent/child
     }
 }
